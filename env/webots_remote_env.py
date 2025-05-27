@@ -13,8 +13,8 @@ class WebotsRemoteEnv(gym.Env):
         self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.conn.connect((self.host, self.port))
 
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(6,), dtype=np.float32)
-        self.action_space = spaces.Box(low=-5.0, high=5.0, shape=(2,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(14,), dtype=np.float32)
+        self.action_space = spaces.Box(low=-50.0, high=130.0, shape=(2,), dtype=np.float32)
 
     def step(self, action):
         msg = json.dumps({'cmd': 'step', 'action': action.tolist()}).encode()
