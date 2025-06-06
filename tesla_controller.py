@@ -156,40 +156,55 @@ class CustomCarEnv:
         roll, pitch, yaw = obs[14:17]
         lidar_vals = obs[9:14]
 
-        # === Distanza dal target (reward shaping principale) ===
-        prev_distance = getattr(self, 'prev_distance', None)
+        # === Target distance ===
         current_distance = np.linalg.norm(np.array([
             self.target_x - pos[0],
             self.target_y - pos[1],
             self.target_z - pos[2]
         ]))
+        prev_distance = getattr(self, 'prev_distance', None)
 
-        if prev_distance is None:
-            self.prev_distance = current_distance
-
-        # reward positivo per ogni avanzamento verso il target
-        progress_reward = self.prev_distance - current_distance
+        # === Progresso (anche negativo se si allontana) ===
+        progress_reward = 0.0
+        if prev_distance is not None:
+            progress_reward = prev_distance - current_distance
         self.prev_distance = current_distance
 
-        # === Penalità collisioni (forte penalità se vicino agli ostacoli) ===
+        # === Precisione posizione target ===
+        proximity_reward = 0.0
+        if current_distance < 1.0:
+            proximity_reward = 1.0 - current_distance  # reward massimo a 0, decresce fino a 1m
+
+        # === Penalità collisione ===
         collision_penalty = -1.0 if np.any(lidar_vals < self.collision_th) else 0.0
 
-        # === Penalità ribaltamento (roll/pitch eccessivi) ===
-        fall_penalty = -1.0 if abs(roll) > 0.05 or abs(pitch) > 0.05 else 0.0
+        # === Penalità ribaltamento ===
+        fall_penalty = -1.0 if abs(roll) > 0.15 or abs(pitch) > 0.15 else 0.0
 
-        # === Penalità per sterzata eccessiva ===
-        steer_penalty = -0.05 * abs(self.front_left_steer.getTargetPosition())
+        # === Controllo sterzo: incentivare sterzi controllati ma ampi se necessario ===
+        steer_left = self.front_left_steer.getTargetPosition()
+        steer_right = self.front_right_steer.getTargetPosition()
+        avg_steer = 0.5 * (steer_left + steer_right)
 
-        # === Penalità per differenza tra ruote (zig-zagging) ===
+        # Penalità solo se sterzate inutili (cioè quando si è in spazio aperto)
+        steer_penalty = -0.02 * abs(avg_steer)
+
+        # === Retro (velocità negativa) ammessa ===
+        # Premia manovre lente anche in retromarcia se servono
+        avg_speed = 0.5 * (left_v + right_v)
+        reverse_bonus = 0.1 if avg_speed < 0 else 0.0
+
+        # === Penalità per ruote non coordinate (zig-zag) ===
         velocity_penalty = -0.1 * abs(left_v - right_v)
 
-        # === Bonus per raggiungimento target ===
-        target_reached = current_distance < self.distance_target_threshold
-        target_bonus = 10.0 if target_reached else 0.0
+        # === Bonus finale ===
+        target_bonus = 10.0 if current_distance < self.distance_target_threshold else 0.0
 
-        # === Composizione reward ===
+        # === Reward totale ===
         reward = (
             + 2.0 * progress_reward
+            + 3.0 * proximity_reward
+            + reverse_bonus
             + collision_penalty
             + fall_penalty
             + steer_penalty
@@ -235,7 +250,7 @@ class CustomCarEnv:
         self.front_left_steer.setPosition(0.0)
         self.front_right_steer.setPosition(0.0)
 
-
+        self.prev_distance = None
         
         self.curr_timestep = 0
 
