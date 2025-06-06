@@ -19,6 +19,13 @@ class CustomCarEnv:
         self.left_motor = self.robot.getDevice('left_rear_wheel')
         self.right_motor = self.robot.getDevice('right_rear_wheel')
 
+        self.front_left_steer = self.robot.getDevice('left_steer')
+        self.front_right_steer = self.robot.getDevice('right_steer')
+
+        if self.front_left_steer is None or self.front_right_steer is None:
+            print("ERRORE: Attuatori di sterzo non trovati.")
+            exit()
+
         self.lidar = self.robot.getDevice('lidar_front')
         self.lidar.enable(self.timestep)
         self.lidar.enablePointCloud() #attiva la nuvola di punti
@@ -34,13 +41,17 @@ class CustomCarEnv:
         self.rotation_field = self.car_node.getField('rotation')
 
         if self.left_motor is None or self.right_motor is None:
-            print("ERRORE: Motori non trovati. Assicurati di usare un nodo basato su 'Car' come TeslaModel3.")
+            print("ERRORE: Motori non trovati.")
             exit()
 
         self.left_motor.setPosition(float('inf'))
         self.right_motor.setPosition(float('inf'))
         self.left_motor.setVelocity(0.0)
         self.right_motor.setVelocity(0.0)
+
+        
+        self.front_left_steer.setPosition(0.0)
+        self.front_right_steer.setPosition(0.0)
 
         self.target_x = 37.0
         self.target_y = 0.0
@@ -68,6 +79,10 @@ class CustomCarEnv:
         avg_speed = 0.5 * (action[0] + action[1])
         self.left_motor.setVelocity(avg_speed)
         self.right_motor.setVelocity(avg_speed)
+
+        # Imposta l'angolo di sterzata delle ruote anteriori
+        self.front_left_steer.setPosition(action[2])
+        self.front_right_steer.setPosition(action[2])
 
         #print(f"STEP: azione ricevuta = {action}")  # DEBUG
         
@@ -100,7 +115,7 @@ class CustomCarEnv:
         #print(f'pos: {pos}') #DEBUG
 
         orientation = self.imu.getRollPitchYaw() if self.imu else [0.0, 0.0, 0.0]
-        print(f'orientation: {orientation}') #DEBUG
+        #print(f'orientation: {orientation}') #DEBUG
 
         rotation = np.array(self.rotation_field.getSFVec3f(), dtype=np.float32)
         #print(f'rot: {rotation}') #DEBUG
@@ -146,7 +161,7 @@ class CustomCarEnv:
         
         #controllo caduta(ribaltamento)
         roll, pitch = obs[14], obs[15]
-        falling = abs(roll) > 0.5 or abs(pitch) > 0.5  # circa 30°
+        falling = abs(roll) > 0.05 or abs(pitch) > 0.05  # circa 30°
         print(f'flipped: {falling}, roll: {roll:.2f}, pitch: {pitch:.2f}')  # DEBUG
         
         return collision or timeout or target_distance < self.distance_target_threshold or falling
@@ -155,6 +170,10 @@ class CustomCarEnv:
     def reset(self):
         self.left_motor.setVelocity(0.0)
         self.right_motor.setVelocity(0.0)
+
+        self.front_left_steer.setPosition(0.0)
+        self.front_right_steer.setPosition(0.0)
+
 
         self.curr_episode += 1
         self.curr_timestep = 0

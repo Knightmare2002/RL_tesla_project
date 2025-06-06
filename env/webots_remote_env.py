@@ -35,7 +35,12 @@ class WebotsRemoteEnv(gym.Env):
         16  yawn
         '''
 
-        self.action_space = spaces.Box(low=-50.0, high=130.0, shape=(2,), dtype=np.float32)
+        self.action_space = spaces.Box(
+            low=np.array([-50.0, -50.0, -0.5]),   # aggiunta sterzata (circa -30°)
+            high=np.array([130.0, 130.0, 0.5]),   # circa +30°
+            dtype=np.float32
+        )
+
 
     def step(self, action):
         msg = json.dumps({'cmd': 'step', 'action': action.tolist()}).encode()
