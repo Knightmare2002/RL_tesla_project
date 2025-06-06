@@ -4,7 +4,7 @@ from env.webots_remote_env import WebotsRemoteEnv  # salva la classe sopra in qu
 
 env = WebotsRemoteEnv()
 
-model = SAC(MlpPolicy, env, verbose=1)
+model = SAC(MlpPolicy, env, verbose=0)
 model.learn(total_timesteps=10000, progress_bar=True)
 
 model.save("webots_sac_model")

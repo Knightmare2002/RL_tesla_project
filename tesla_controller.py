@@ -42,6 +42,11 @@ class CustomCarEnv:
         self.left_motor.setVelocity(0.0)
         self.right_motor.setVelocity(0.0)
 
+        self.target_x = 37.0
+        self.target_y = 0.0
+        self.target_z = 0.0
+        self.distance_target_threshold = 2
+
         # Sensori
         self.gps = self.robot.getDevice('gps')
         if self.gps is not None:
@@ -50,13 +55,20 @@ class CustomCarEnv:
             print("AVVISO: GPS non trovato.")
 
         
+        self.imu = self.robot.getDevice('inertial unit')
+        if self.imu is not None:
+            self.imu.enable(self.timestep)
+        else:
+            print("AVVISO: Inertial Unit non trovata.")
+
         self.reset()
 
     def step(self, action):
     
-        left_speed, right_speed = action
-        self.left_motor.setVelocity(left_speed)
-        self.right_motor.setVelocity(right_speed)
+        avg_speed = 0.5 * (action[0] + action[1])
+        self.left_motor.setVelocity(avg_speed)
+        self.right_motor.setVelocity(avg_speed)
+
         #print(f"STEP: azione ricevuta = {action}")  # DEBUG
         
         if self.robot.step(self.timestep) == -1:
@@ -67,15 +79,15 @@ class CustomCarEnv:
         reward = self._compute_reward(obs, action)
         done = self._check_done(obs)
         self.curr_timestep += 1
-        print(f'current step: {self.curr_timestep}') #DEBUG
+        #print(f'current step: {self.curr_timestep}') #DEBUG
         #print(f"STEP: obs = {obs}, reward = {reward:.4f}, done = {done}")  # DEBUG
 
         if done:
-            print("Episodio terminato: collisione o ribaltamento o timeout.")  # DEBUG
+            #print("Episodio terminato: collisione o ribaltamento o timeout.")  # DEBUG
             obs = self.reset()
             return obs, reward, True, {}
 
-        return obs, reward, done, {}
+        return obs, reward, False, {}
 
     def _get_obs(self):
         left_velocity = np.array([self.left_motor.getVelocity()], dtype=np.float32)
@@ -87,6 +99,9 @@ class CustomCarEnv:
         pos = self.gps.getValues() if self.gps else [0.0, 0.0, 0.0]
         #print(f'pos: {pos}') #DEBUG
 
+        orientation = self.imu.getRollPitchYaw() if self.imu else [0.0, 0.0, 0.0]
+        print(f'orientation: {orientation}') #DEBUG
+
         rotation = np.array(self.rotation_field.getSFVec3f(), dtype=np.float32)
         #print(f'rot: {rotation}') #DEBUG
 
@@ -94,14 +109,14 @@ class CustomCarEnv:
         #===DEBUG===
         lidar_values = np.array(self.lidar.getRangeImage(), dtype=np.float32)
 
-        # Filtra i valori inf sostituendoli con il max range del lidar (fallback sensato)
+        # Filtra i valori inf sostituendoli con il max range del lidar
         lidar_values[np.isinf(lidar_values)] = self.lidar.getMaxRange()
         lidar_values.sort()
         top_5_smallest_distances = lidar_values[:5] #valid_distances[:5] 
-        print(f'distanza: {top_5_smallest_distances}')
+        #print(f'distanza: {top_5_smallest_distances}')
         #======
 
-        return np.concatenate([left_velocity, right_velocity, pos, rotation, top_5_smallest_distances], dtype=np.float32)
+        return np.concatenate([left_velocity, right_velocity, pos, rotation, top_5_smallest_distances, orientation], dtype=np.float32)
 
     def _compute_reward(self, obs, action):
     
@@ -120,28 +135,40 @@ class CustomCarEnv:
         timeout = self.curr_timestep >= self.max_timesteps
         print(f'timeout: {timeout}') #DEBUG
 
-        return collision or timeout
+        #controllo target
+        tesla_x = obs[2]
+        tesla_y = obs[3]
+        tesla_z = obs[4]
+        target_distance = np.sqrt((self.target_x - tesla_x)**2 +\
+                                  (self.target_y - tesla_y)**2 +\
+                                    (self.target_z - tesla_z)**2  )
+        print(f'target: {target_distance < self.distance_target_threshold}') #DEBUG
+        
+        #controllo caduta(ribaltamento)
+        roll, pitch = obs[14], obs[15]
+        falling = abs(roll) > 0.5 or abs(pitch) > 0.5  # circa 30°
+        print(f'flipped: {falling}, roll: {roll:.2f}, pitch: {pitch:.2f}')  # DEBUG
+        
+        return collision or timeout or target_distance < self.distance_target_threshold or falling
 
 
     def reset(self):
         self.left_motor.setVelocity(0.0)
         self.right_motor.setVelocity(0.0)
-        
-        print(f'current_episode: {self.curr_episode}') #DEBUG
-        self.curr_episode+=1
+
+        self.curr_episode += 1
         self.curr_timestep = 0
 
-        # Reset posizione e orientamento
-        self.translation_field.setSFVec3f([0.5, 0, 0.3])  # <-- aggiorna se serve
-        self.rotation_field.setSFRotation([0, 1, 0, 0])        # <-- reset YAW a 0
-        self.robot.step(self.timestep)  # applica il reset
+        self.car_node.setVelocity([0, 0, 0, 0, 0, 0]) #reset fisico totale della macchina
+        self.car_node.resetPhysics()
+        self.translation_field.setSFVec3f([0.502282, 0.0485166, 1])
+        self.rotation_field.setSFRotation([0.0791655, -0.995765, 0.0467393, 0.0157421])
 
         for _ in range(10):
-            if self.robot.step(self.timestep) == -1:
-                print("Simulazione interrotta durante il reset.") #DEBUG
-                return np.zeros(6, dtype=np.float32)
-        
+            self.robot.step(self.timestep)
+
         return self._get_obs()
+
 
 
 # --- Socket server per comunicazione RL esterna ---

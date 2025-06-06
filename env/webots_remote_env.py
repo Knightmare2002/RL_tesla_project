@@ -13,7 +13,28 @@ class WebotsRemoteEnv(gym.Env):
         self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.conn.connect((self.host, self.port))
 
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(14,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(17,), dtype=np.float32)
+        '''
+        OBSERVATION SPACE
+        0   left_velocity
+        1   right_velocity
+        2   pos_x
+        3   pos_y
+        4   pos_z
+        5   rot_1
+        6   rot_2
+        7   rot_3
+        8   rot_4
+        9   lidar_1
+        10  lidar_2
+        11  lidar_3
+        12  lidar_4
+        13  lidar_5
+        14  roll
+        15  pitch
+        16  yawn
+        '''
+
         self.action_space = spaces.Box(low=-50.0, high=130.0, shape=(2,), dtype=np.float32)
 
     def step(self, action):
