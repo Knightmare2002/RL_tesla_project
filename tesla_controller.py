@@ -5,9 +5,10 @@ import json
 import time
 
 class CustomCarEnv:
+    robot = Supervisor()
     def __init__(self):
     
-        self.robot = Supervisor()
+        
         self.timestep = int(self.robot.getBasicTimeStep())
         
         '''
@@ -30,7 +31,7 @@ class CustomCarEnv:
         self.lidar.enable(self.timestep)
         self.lidar.enablePointCloud() #attiva la nuvola di punti
         
-        self.collision_th = 0.2
+        self.collision_th = 0.5
         self.max_timesteps = 1000 #settato per 100m di percorso
         self.curr_timestep = 0
         self.curr_episode = 0
@@ -53,9 +54,9 @@ class CustomCarEnv:
         self.front_left_steer.setPosition(0.0)
         self.front_right_steer.setPosition(0.0)
 
-        self.target_x = 37.0
-        self.target_y = 0.0
-        self.target_z = 0.0
+        self.target_x = 50.4
+        self.target_y = -2.84
+        self.target_z = 0.216
         self.distance_target_threshold = 2
 
         # Sensori
@@ -71,6 +72,10 @@ class CustomCarEnv:
             self.imu.enable(self.timestep)
         else:
             print("AVVISO: Inertial Unit non trovata.")
+
+        self.total_reward = 0.0
+        self.reward_print_interval = 50  # ogni 50 step stampa
+
 
         self.reset()
 
@@ -91,16 +96,26 @@ class CustomCarEnv:
             return None, 0.0, True, {}
 
         obs = self._get_obs()
-        reward = self._compute_reward(obs, action)
+        reward = self._compute_reward(obs)
+
+        self.total_reward += reward
+
+        if self.curr_timestep % self.reward_print_interval == 0:
+            print(f"[{self.curr_timestep}] Reward cumulativa episodio {self.curr_episode}: {self.total_reward:.2f}")
+
+
         done = self._check_done(obs)
         self.curr_timestep += 1
         #print(f'current step: {self.curr_timestep}') #DEBUG
         #print(f"STEP: obs = {obs}, reward = {reward:.4f}, done = {done}")  # DEBUG
 
         if done:
-            #print("Episodio terminato: collisione o ribaltamento o timeout.")  # DEBUG
+            print(f"[FINE] Episodio {self.curr_episode} terminato con reward cumulativa: {self.total_reward:.2f}\n")
+            print("==========================")
+            self.curr_episode += 1
             obs = self.reset()
             return obs, reward, True, {}
+
 
         return obs, reward, False, {}
 
@@ -133,10 +148,55 @@ class CustomCarEnv:
 
         return np.concatenate([left_velocity, right_velocity, pos, rotation, top_5_smallest_distances, orientation], dtype=np.float32)
 
-    def _compute_reward(self, obs, action):
-    
-        forward_velocity = obs[0]
-        reward = forward_velocity - 1e-3 * np.square(action).sum()
+    def _compute_reward(self, obs):
+        # === Parse observation ===
+        left_v = obs[0]
+        right_v = obs[1]
+        pos = obs[2:5]
+        roll, pitch, yaw = obs[14:17]
+        lidar_vals = obs[9:14]
+
+        # === Distanza dal target (reward shaping principale) ===
+        prev_distance = getattr(self, 'prev_distance', None)
+        current_distance = np.linalg.norm(np.array([
+            self.target_x - pos[0],
+            self.target_y - pos[1],
+            self.target_z - pos[2]
+        ]))
+
+        if prev_distance is None:
+            self.prev_distance = current_distance
+
+        # reward positivo per ogni avanzamento verso il target
+        progress_reward = self.prev_distance - current_distance
+        self.prev_distance = current_distance
+
+        # === Penalità collisioni (forte penalità se vicino agli ostacoli) ===
+        collision_penalty = -1.0 if np.any(lidar_vals < self.collision_th) else 0.0
+
+        # === Penalità ribaltamento (roll/pitch eccessivi) ===
+        fall_penalty = -1.0 if abs(roll) > 0.05 or abs(pitch) > 0.05 else 0.0
+
+        # === Penalità per sterzata eccessiva ===
+        steer_penalty = -0.05 * abs(self.front_left_steer.getTargetPosition())
+
+        # === Penalità per differenza tra ruote (zig-zagging) ===
+        velocity_penalty = -0.1 * abs(left_v - right_v)
+
+        # === Bonus per raggiungimento target ===
+        target_reached = current_distance < self.distance_target_threshold
+        target_bonus = 10.0 if target_reached else 0.0
+
+        # === Composizione reward ===
+        reward = (
+            + 2.0 * progress_reward
+            + collision_penalty
+            + fall_penalty
+            + steer_penalty
+            + velocity_penalty
+            + target_bonus
+        )
+
         return reward
 
     def _check_done(self, obs):
@@ -144,11 +204,11 @@ class CustomCarEnv:
         # Controllo urto: tutti e 5 i valori più piccoli devono essere sotto soglia
         last_5_lidar = obs[-5:]
         collision = all(d < self.collision_th for d in last_5_lidar)
-        print(f'collision: {collision}') #DEBUG
+        #print(f'collision: {collision}') #DEBUG
 
         # Controllo timeout
         timeout = self.curr_timestep >= self.max_timesteps
-        print(f'timeout: {timeout}') #DEBUG
+        #print(f'timeout: {timeout}') #DEBUG
 
         #controllo target
         tesla_x = obs[2]
@@ -157,15 +217,16 @@ class CustomCarEnv:
         target_distance = np.sqrt((self.target_x - tesla_x)**2 +\
                                   (self.target_y - tesla_y)**2 +\
                                     (self.target_z - tesla_z)**2  )
-        print(f'target: {target_distance < self.distance_target_threshold}') #DEBUG
+        #print(f'target: {target_distance < self.distance_target_threshold}') #DEBUG
         
         #controllo caduta(ribaltamento)
         roll, pitch = obs[14], obs[15]
         falling = abs(roll) > 0.05 or abs(pitch) > 0.05  # circa 30°
-        print(f'flipped: {falling}, roll: {roll:.2f}, pitch: {pitch:.2f}')  # DEBUG
+        #print(f'flipped: {falling}, roll: {roll:.2f}, pitch: {pitch:.2f}')  # DEBUG
+
+        #TODO CONTROLLO CHE LA MACCHINA NON SIA FERMA DA TROPPO TEMPO
         
         return collision or timeout or target_distance < self.distance_target_threshold or falling
-
 
     def reset(self):
         self.left_motor.setVelocity(0.0)
@@ -175,16 +236,20 @@ class CustomCarEnv:
         self.front_right_steer.setPosition(0.0)
 
 
-        self.curr_episode += 1
+        
         self.curr_timestep = 0
+
+        self.total_reward = 0.0
 
         self.car_node.setVelocity([0, 0, 0, 0, 0, 0]) #reset fisico totale della macchina
         self.car_node.resetPhysics()
-        self.translation_field.setSFVec3f([0.502282, 0.0485166, 1])
-        self.rotation_field.setSFRotation([0.0791655, -0.995765, 0.0467393, 0.0157421])
+        self.translation_field.setSFVec3f([0.502605, 0.0485405, 0.34687])
+        self.rotation_field.setSFRotation([0.0791655, -0.995765, 0.0467393,0.0157421])
 
-        for _ in range(10):
+        
+        for _ in range(20):
             self.robot.step(self.timestep)
+        
 
         return self._get_obs()
 
@@ -231,6 +296,7 @@ try:
 
                 elif msg['cmd'] == 'exit':
                     print("Comando 'exit' ricevuto.")
+                    env.robot.simulationQuit(0)
                     break
 
 except Exception as e:

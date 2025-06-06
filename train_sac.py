@@ -4,8 +4,9 @@ from env.webots_remote_env import WebotsRemoteEnv  # salva la classe sopra in qu
 
 env = WebotsRemoteEnv()
 
-model = SAC(MlpPolicy, env, verbose=0)
-model.learn(total_timesteps=10000, progress_bar=True)
-
-model.save("webots_sac_model")
-env.close()
+try:
+    model = SAC(MlpPolicy, env, verbose=0)
+    model.learn(total_timesteps=50_000, progress_bar=True)
+    model.save("webots_sac_model")
+finally:
+    env.close()  # Assicura che venga sempre chiamato anche se il training fallisce
