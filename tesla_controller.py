@@ -54,8 +54,8 @@ class CustomCarEnv:
         self.front_left_steer.setPosition(0.0)
         self.front_right_steer.setPosition(0.0)
 
-        self.target_x = 50.4
-        self.target_y = -2.84
+        self.target_x = 50.1
+        self.target_y = -3.31
         self.target_z = 0.216
         self.distance_target_threshold = 2
 
@@ -197,6 +197,9 @@ class CustomCarEnv:
         # === Penalità per ruote non coordinate (zig-zag) ===
         velocity_penalty = -0.1 * abs(left_v - right_v)
 
+        # === Penalità tempo: penalizza episodi più lunghi ===
+        time_penalty = -0.0005 * self.curr_timestep
+
         # === Bonus finale ===
         target_bonus = 10.0 if current_distance < self.distance_target_threshold else 0.0
 
@@ -210,6 +213,7 @@ class CustomCarEnv:
             + steer_penalty
             + velocity_penalty
             + target_bonus
+            + time_penalty
         )
 
         return reward
