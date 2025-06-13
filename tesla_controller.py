@@ -33,11 +33,15 @@ class CustomCarEnv:
         self.lidar.enablePointCloud() #attiva la nuvola di punti
         
         self.collision_th = 0.5
-        self.max_timesteps = 1000 #settato per 100m di percorso
+        self.max_timesteps = 2000 #settato a 1000 per 100m di percorso
         self.curr_timestep = 0
         self.curr_episode = 0
 
-        # Supervisor: ottieni riferimento al nodo Tesla
+        #=====Road settings=====
+        self.road_length = 200
+        self.road_width = 10
+
+        #=====Supervisor: ottieni riferimento al nodo Tesla======
         self.car_node = self.robot.getFromDef("tesla3")
         self.translation_field = self.car_node.getField('translation')
         self.rotation_field = self.car_node.getField('rotation')
@@ -62,9 +66,9 @@ class CustomCarEnv:
         self.target_node = self.robot.getFromDef('target')
         self.target_translation = self.target_node.getField('translation')
         self.distance_target_threshold = 2
+        #==================
 
-
-        # Sensori
+        #=====Sensori=====
         self.gps = self.robot.getDevice('gps')
         if self.gps is not None:
             self.gps.enable(self.timestep)
@@ -83,6 +87,12 @@ class CustomCarEnv:
         #=========================
 
         #=====Oggetti da randomizzare (ostacoli, barili ecc.)=====
+        self.spawn_range_x = (0, self.road_length)
+        self.spawn_range_y = (-self.road_width/2, self.road_width/2)
+
+        self.min_dist_obj = 3.0
+        self.min_num_obst = 12
+
         self.random_objects = []
         i=0
 
@@ -338,12 +348,13 @@ class CustomCarEnv:
     def udr(self):
             #=====Posizione iniziale random della macchina=====
             rand_x = np.random.uniform(0, 5)
-            rand_y = np.random.uniform(-2, 2)
+            rand_y = np.random.uniform(self.spawn_range_y[0]+1, self.spawn_range_y[1]-1)  # leggermente dentro i bordi strada
             self.translation_field.setSFVec3f([rand_x, rand_y, 0.7])
 
             #=====Posizione iniziale random del target=====
-            self.target_x = np.random.uniform(45, 55)
-            self.target_y = np.random.uniform(-2, 2)
+            # Cambia range x in modo che il target sia vicino alla fine strada (es. ultimi 10m)
+            self.target_x = np.random.uniform(self.road_length - 10, self.road_length - 5)
+            self.target_y = np.random.uniform(self.spawn_range_y[0]+1, self.spawn_range_y[1]-1)
             self.target_translation.setSFVec3f([self.target_x, self.target_y, 0.12])  # z bassa per essere sul terreno
 
 
@@ -352,37 +363,55 @@ class CustomCarEnv:
             self.rotation_field.setSFRotation([0, 0, 1, angle]) #ruota intro z
 
             #===== Randomizzazione con distanza minima tra ostacoli =====
-            range_x = [10, 80]
-            range_y = [-3.5, 3.5]
+            range_x = [10, self.road_length - 10]  # ostacoli posizionati dopo i primi 10m e prima degli ultimi 10m
+            range_y = [self.spawn_range_y[0]+1, self.spawn_range_y[1]-1]
             z = 0.4
-            min_dist = 3
+            min_dist = self.min_dist_obj
 
             placed_positions = []
 
-            for obj in self.random_objects:
+            # Includiamo la posizione della macchina e del target per evitare sovrapposizioni
+            car_pos = np.array([rand_x, rand_y])
+            target_pos = np.array([self.target_x, self.target_y])
+            placed_positions.append(car_pos)
+            placed_positions.append(target_pos)
+
+            # Controlla quanti ostacoli abbiamo nel mondo e quanti ne servono almeno
+            num_objects = len(self.random_objects)
+            num_obstacles_to_place = max(num_objects, self.min_num_obst)
+
+            # Se il numero di ostacoli esistenti è minore di min_num_obstacles, avvisa
+            if num_objects < self.min_num_obst:
+                print(f"[AVVISO] Numero ostacoli disponibili ({num_objects}) < numero minimo consigliato ({self.min_num_obst}).")
+
+            # Ciclo per posizionare ostacoli, minimo num_obstacles_to_place
+            for i in range(num_obstacles_to_place):
+                # Se ci sono meno ostacoli nel mondo dei posti da posizionare, ricicliamo da random_objects o creiamo logica extra (qui semplice riciclo)
+                obj = self.random_objects[i % num_objects]
+
                 is_position_valid = False
-                max_attempts = 100
+                max_attempts = 200  # aumentato per maggiore chance
                 attempt = 0
 
                 while not is_position_valid and attempt < max_attempts:
                     new_x = np.random.uniform(*range_x)
                     new_y = np.random.uniform(*range_y)
-                    new_position = [new_x, new_y, z]
+                    new_position = np.array([new_x, new_y])
 
+                    # Controllo distanza minima da tutte le posizioni già piazzate
                     is_overlapping = any(
-                        np.linalg.norm(np.array(new_position[:2]) - np.array(pos[:2])) < min_dist
+                        np.linalg.norm(new_position - pos) < min_dist
                         for pos in placed_positions
                     )
 
                     if not is_overlapping:
                         is_position_valid = True
-                        obj['translation'].setSFVec3f(new_position)
+                        obj['translation'].setSFVec3f([new_x, new_y, z])
                         placed_positions.append(new_position)
                     attempt += 1
 
                 if attempt == max_attempts:
                     print(f"[AVVISO] Impossibile posizionare ostacolo dopo {max_attempts} tentativi.")
-
 
 
 
