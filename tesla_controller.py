@@ -54,9 +54,12 @@ class CustomCarEnv:
         self.front_left_steer.setPosition(0.0)
         self.front_right_steer.setPosition(0.0)
 
-        self.target_x = 50.1
-        self.target_y = -3.31
-        self.target_z = 0.216
+        self.target_x = 59.4
+        self.target_y = 0
+        self.target_z = 0.12
+        
+        self.target_node = self.robot.getFromDef('target')
+        self.target_translation = self.target_node.getField('translation')
         self.distance_target_threshold = 2
 
 
@@ -91,7 +94,17 @@ class CustomCarEnv:
                     'translation': node.getField('translation')
             })
             i += 1
-         #========================
+        #========================
+
+        #======Anti-Blockage=====
+        self.block_counter = 0
+        self.max_block_steps = 50
+        self.last_pos = None
+        self.block_movement_threshold = 0.01  # distanza minima per considerare movimento
+        self.min_speed_threshold = 0.05       # velocità media sotto la quale la macchina è considerata quasi ferma
+
+
+        self.udr_called = False
 
 
         self.reset()
@@ -130,6 +143,7 @@ class CustomCarEnv:
             print(f"[FINE] Episodio {self.curr_episode} terminato con reward cumulativa: {self.total_reward:.2f}\n")
             print("==========================")
             self.curr_episode += 1
+            self.udr_called = False
             obs = self.reset()
             return obs, reward, True, {}
 
@@ -233,7 +247,7 @@ class CustomCarEnv:
             + time_penalty
         )
 
-        return reward
+        return np.clip(reward, -5.0, 5.0)
 
     def _check_done(self, obs):
        
@@ -260,9 +274,25 @@ class CustomCarEnv:
         falling = abs(roll) > 0.05 or abs(pitch) > 0.05  # circa 30°
         #print(f'flipped: {falling}, roll: {roll:.2f}, pitch: {pitch:.2f}')  # DEBUG
 
-        #TODO CONTROLLO CHE LA MACCHINA NON SIA FERMA DA TROPPO TEMPO
+        # === Anti-block system ===
+        curr_pos = np.array([obs[2], obs[3], obs[4]])  # posizione GPS corrente
+        avg_speed = 0.5 * (obs[0] + obs[1])  # media velocità ruote
+
+        if self.last_pos is not None:
+            delta_movement = np.linalg.norm(curr_pos - self.last_pos)
+
+            if delta_movement < self.block_movement_threshold and abs(avg_speed) > self.min_speed_threshold:
+                self.block_counter += 1
+            else:
+                self.block_counter = 0
+        self.last_pos = curr_pos
+
+        is_blocked = self.block_counter > self.max_block_steps
+        if is_blocked:
+            print(f"[ANTI-BLOCK] Macchina bloccata per {self.block_counter} step consecutivi.")
+#
         
-        return collision or timeout or target_distance < self.distance_target_threshold or falling
+        return collision or timeout or target_distance < self.distance_target_threshold or falling or is_blocked
 
     def reset(self):
         self.left_motor.setVelocity(0.0)
@@ -277,7 +307,13 @@ class CustomCarEnv:
 
         self.total_reward = 0.0
 
-        self.udr()
+        self.block_counter = 0
+        self.last_pos = None
+
+        
+        if not self.udr_called:
+            self.udr()
+            self.udr_called = True
 
         self.car_node.setVelocity([0, 0, 0, 0, 0, 0]) #reset fisico totale della macchina
         self.car_node.resetPhysics()
@@ -296,11 +332,13 @@ class CustomCarEnv:
             #=====Posizione iniziale random della macchina=====
             rand_x = np.random.uniform(0, 5)
             rand_y = np.random.uniform(-2, 2)
-            self.translation_field.setSFVec3f([rand_x, rand_y, 0.4])
+            self.translation_field.setSFVec3f([rand_x, rand_y, 0.7])
 
             #=====Posizione iniziale random del target=====
             self.target_x = np.random.uniform(45, 55)
             self.target_y = np.random.uniform(-2, 2)
+            self.target_translation.setSFVec3f([self.target_x, self.target_y, 0.12])  # z bassa per essere sul terreno
+
 
             #=====Rotazione iniziale random della macchina=====
             angle = np.random.uniform(-np.pi, np.pi)

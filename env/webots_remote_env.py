@@ -41,6 +41,28 @@ class WebotsRemoteEnv(gym.Env):
             dtype=np.float32
         )
 
+    def normalize_obs(self, obs):
+        obs = np.copy(obs)
+
+        # Velocità ruote
+        obs[0:2] = (obs[0:2] - 40.0) / 90.0  # da [-50,130] → [-1,1]
+
+        # Posizione X ∈ [0,60] → [-1,1]
+        obs[2] = (obs[2] - 30.0) / 30.0
+        obs[3] = obs[3] / 3.5                # Y ∈ [-3.5,3.5] → [-1,1]
+        obs[4] = (obs[4] - 0.12) / 0.12      # Z ∈ ~[0,0.24]
+
+        # Rotazioni
+        obs[5:9] = np.clip(obs[5:9], -1, 1)  # already likely normalized
+
+        # Lidar
+        obs[9:14] = obs[9:14] / 2.0         # normalize by max lidar range
+
+        # Orientamenti (roll, pitch, yaw) ∈ [-π, π]
+        obs[14:17] = obs[14:17] / np.pi
+
+        return np.clip(obs, -1.0, 1.0)
+
 
     def step(self, action):
         msg = json.dumps({'cmd': 'step', 'action': action.tolist()}).encode()
@@ -50,14 +72,16 @@ class WebotsRemoteEnv(gym.Env):
         obs = np.array(data['obs'], dtype=np.float32)
         reward = data['reward']
         done = data['done']
-        return obs, reward, done, False, {}
+        norm_obs = self.normalize_obs(obs)
+        return norm_obs, reward, done, False, {}
 
     def reset(self, seed=None, options=None):
         self.conn.send(json.dumps({'cmd': 'reset'}).encode())
         response = self.conn.recv(1024)
         data = json.loads(response.decode())
         obs = np.array(data['obs'], dtype=np.float32)
-        return obs, {}
+        norm_obs = self.normalize_obs(obs)
+        return norm_obs, {}
 
     def close(self):
         self.conn.send(json.dumps({'cmd': 'exit'}).encode())
