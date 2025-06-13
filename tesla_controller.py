@@ -3,6 +3,8 @@ import numpy as np
 import socket
 import json
 
+#TODO INSERISCI UN SENSORE POSTERIORE PER LA RETROMARCIA IDENTICO A QUELLO FRONTALE
+
 class CustomCarEnv:
     robot = Supervisor()
     def __init__(self):
