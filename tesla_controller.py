@@ -2,7 +2,6 @@ from controller import Supervisor
 import numpy as np
 import socket
 import json
-import time
 
 class CustomCarEnv:
     robot = Supervisor()
@@ -187,7 +186,7 @@ class CustomCarEnv:
         roll, pitch, yaw = obs[14:17]
         lidar_vals = obs[9:14]
 
-        # === Target distance ===
+        # === Distanza attuale dal target ===
         current_distance = np.linalg.norm(np.array([
             self.target_x - pos[0],
             self.target_y - pos[1],
@@ -195,54 +194,60 @@ class CustomCarEnv:
         ]))
         prev_distance = getattr(self, 'prev_distance', None)
 
-        # === Progresso (anche negativo se si allontana) ===
+        # === Reward per progresso verso il target ===
         progress_reward = 0.0
         if prev_distance is not None:
             progress_reward = prev_distance - current_distance
         self.prev_distance = current_distance
 
-        # === Precisione posizione target ===
+        # === Reward per vicinanza precisa al target (entro 1m) ===
         proximity_reward = 0.0
         if current_distance < 1.0:
-            proximity_reward = 1.0 - current_distance  # reward massimo a 0, decresce fino a 1m
+            proximity_reward = 1.0 - current_distance
 
-        # === Penalità collisione ===
+        # === Penalità collisione netta ===
         collision_penalty = -1.0 if np.any(lidar_vals < self.collision_th) else 0.0
 
         # === Penalità ribaltamento ===
         fall_penalty = -1.0 if abs(roll) > 0.15 or abs(pitch) > 0.15 else 0.0
 
-        # === Controllo sterzo: incentivare sterzi controllati ma ampi se necessario ===
+        # === Penalità sterzata brusca (penalizza angoli sterzata grandi, ma non troppo) ===
         steer_left = self.front_left_steer.getTargetPosition()
         steer_right = self.front_right_steer.getTargetPosition()
         avg_steer = 0.5 * (steer_left + steer_right)
+        steer_penalty = -0.01 * (avg_steer ** 2)  # penalità quadratica più dolce
 
-        # Penalità solo se sterzate inutili (cioè quando si è in spazio aperto)
-        steer_penalty = -0.02 * abs(avg_steer)
+        # === Penalità per velocità differenziale fra ruote (zig-zag) ===
+        velocity_penalty = -0.1 * abs(left_v - right_v)
 
-        # === Retro (velocità negativa) ammessa ===
-        # Premia manovre lente anche in retromarcia se servono
+        # === Penalità proporzionale alla distanza minima lidar ===
+        min_lidar_dist = np.min(lidar_vals)
+        # se è vicino a ostacoli, penalizzo proporzionalmente, altrimenti 0
+        lidar_penalty = 0.0
+        if min_lidar_dist < self.collision_th * 3:
+            # ad esempio penalità lineare decrescente da 0 a -0.5 tra collision_th*3 e 0
+            lidar_penalty = -0.5 * (self.collision_th * 3 - min_lidar_dist) / (self.collision_th * 3)
+
+        # === Bonus retromarcia lenta ===
         avg_speed = 0.5 * (left_v + right_v)
         reverse_bonus = 0.1 if avg_speed < 0 else 0.0
 
-        # === Penalità per ruote non coordinate (zig-zag) ===
-        velocity_penalty = -0.1 * abs(left_v - right_v)
-
-        # === Penalità tempo: penalizza episodi più lunghi ===
+        # === Penalità tempo (episodi lunghi) ===
         time_penalty = -0.0005 * self.curr_timestep
 
-        # === Bonus finale ===
+        # === Bonus finale raggiungimento target ===
         target_bonus = 10.0 if current_distance < self.distance_target_threshold else 0.0
 
         # === Reward totale ===
         reward = (
-            + 2.0 * progress_reward
+            2.0 * progress_reward
             + 3.0 * proximity_reward
             + reverse_bonus
             + collision_penalty
             + fall_penalty
             + steer_penalty
             + velocity_penalty
+            + lidar_penalty
             + target_bonus
             + time_penalty
         )
