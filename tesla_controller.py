@@ -59,6 +59,7 @@ class CustomCarEnv:
         self.target_z = 0.216
         self.distance_target_threshold = 2
 
+
         # Sensori
         self.gps = self.robot.getDevice('gps')
         if self.gps is not None:
@@ -75,6 +76,22 @@ class CustomCarEnv:
 
         self.total_reward = 0.0
         self.reward_print_interval = 50  # ogni 50 step stampa
+        #=========================
+
+        #=====Oggetti da randomizzare (ostacoli, barili ecc.)=====
+        self.random_objects = []
+        i=0
+
+        while True:
+            node = self.robot.getFromDef(f'ostacolo_{i}')
+            if not node:
+                break
+            self.random_objects.append({
+                    'node': node,
+                    'translation': node.getField('translation')
+            })
+            i += 1
+         #========================
 
 
         self.reset()
@@ -260,10 +277,13 @@ class CustomCarEnv:
 
         self.total_reward = 0.0
 
+        self.udr()
+
         self.car_node.setVelocity([0, 0, 0, 0, 0, 0]) #reset fisico totale della macchina
         self.car_node.resetPhysics()
-        self.translation_field.setSFVec3f([0.502605, 0.0485405, 0.34687])
-        self.rotation_field.setSFRotation([0.0791655, -0.995765, 0.0467393,0.0157421])
+
+        #self.translation_field.setSFVec3f([0.502863, 0.493051, 0.446674])
+        #self.rotation_field.setSFRotation([0.0791655, -0.995765, 0.0467393,0.0157421])
 
         
         for _ in range(20):
@@ -271,6 +291,53 @@ class CustomCarEnv:
         
 
         return self._get_obs()
+
+    def udr(self):
+            #=====Posizione iniziale random della macchina=====
+            rand_x = np.random.uniform(0, 5)
+            rand_y = np.random.uniform(-2, 2)
+            self.translation_field.setSFVec3f([rand_x, rand_y, 0.4])
+
+            #=====Posizione iniziale random del target=====
+            self.target_x = np.random.uniform(45, 55)
+            self.target_y = np.random.uniform(-2, 2)
+
+            #=====Rotazione iniziale random della macchina=====
+            angle = np.random.uniform(-np.pi, np.pi)
+            self.rotation_field.setSFRotation([0, 0, 1, angle]) #ruota intro z
+
+            #===== Randomizzazione con distanza minima tra ostacoli =====
+            range_x = [10, 80]
+            range_y = [-3.5, 3.5]
+            z = 0.4
+            min_dist = 3
+
+            placed_positions = []
+
+            for obj in self.random_objects:
+                is_position_valid = False
+                max_attempts = 100
+                attempt = 0
+
+                while not is_position_valid and attempt < max_attempts:
+                    new_x = np.random.uniform(*range_x)
+                    new_y = np.random.uniform(*range_y)
+                    new_position = [new_x, new_y, z]
+
+                    is_overlapping = any(
+                        np.linalg.norm(np.array(new_position[:2]) - np.array(pos[:2])) < min_dist
+                        for pos in placed_positions
+                    )
+
+                    if not is_overlapping:
+                        is_position_valid = True
+                        obj['translation'].setSFVec3f(new_position)
+                        placed_positions.append(new_position)
+                    attempt += 1
+
+                if attempt == max_attempts:
+                    print(f"[AVVISO] Impossibile posizionare ostacolo dopo {max_attempts} tentativi.")
+
 
 
 
