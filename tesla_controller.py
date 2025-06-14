@@ -159,13 +159,13 @@ class CustomCarEnv:
             print(f"[{self.curr_timestep}] Reward cumulativa episodio {self.curr_episode}: {self.total_reward:.2f}")
 
 
-        done = self._check_done(obs)
+        done, cause = self._check_done(obs)
         self.curr_timestep += 1
         #print(f'current step: {self.curr_timestep}') #DEBUG
         #print(f"STEP: obs = {obs}, reward = {reward:.4f}, done = {done}")  # DEBUG
 
         if done:
-            print(f"[FINE] Episodio {self.curr_episode} terminato con reward cumulativa: {self.total_reward:.2f}\n")
+            print(f"[FINE][{cause}]Episodio {self.curr_episode} terminato con reward cumulativa: {self.total_reward:.2f}\n")
             print("==========================")
             self.curr_episode += 1
             self.udr_called = False
@@ -178,28 +178,48 @@ class CustomCarEnv:
     def _get_obs(self):
         #=====Gestione velocità=====
         left_velocity = np.array([self.left_motor.getVelocity()], dtype=np.float32)
+
+        left_velocity = (left_velocity - 40.0) / 90.0 #Normalization
+
         #print(f'left_v: {left_velocity}') #DEBUG
         #print(f'l_velocity shape: {left_velocity.shape}') #DEBUG
 
         right_velocity = np.array([self.right_motor.getVelocity()], dtype=np.float32)
+
+        right_velocity = (right_velocity - 40.0) / 90.0 #Normalization
+
         #print(f'right_v: {right_velocity}') #DEBUG
         #print(f'r_velocity shape: {right_velocity.shape}') #DEBUG
         #===========================
 
         #=====Gestione posizione gps=====
-        pos = self.gps.getValues() if self.gps else [0.0, 0.0, 0.0]
+        pos = np.array(self.gps.getValues() if self.gps else [0.0, 0.0, 0.0], dtype=np.float32)
+
+        pos[0] /= self.road_length
+        pos[1] /= self.road_width
+        pos[2] /= 1.0
+
         #print(f'pos: {pos}') #DEBUG
         #print(f'pos shape: {len(pos)}') #DEBUG
         #================================
 
         #=====Gestione ribaltamento=====
-        orientation = self.imu.getRollPitchYaw() if self.imu else [0.0, 0.0, 0.0]
+        max_angle = 0.25 #15 gradi
+        orientation = np.array(self.imu.getRollPitchYaw() if self.imu else [0.0, 0.0, 0.0], dtype=np.float32)
+
+        orientation[0] /= max_angle
+        orientation[1] /= max_angle
+        orientation[2] /= np.pi
+
         #print(f'orientation: {orientation}') #DEBUG
         #print(f'orientation shape: {len(orientation)}') #DEBUG
         #===============================
 
         ##=====Gestione rotazione=====
         rotation = np.array(self.rotation_field.getSFVec3f(), dtype=np.float32)
+
+        rotation[3] /= np.pi
+
         #print(f'rot: {rotation}') #DEBUG
         #print(f'rotation shape: {rotation.shape}') #DEBUG
         #============================
@@ -211,18 +231,36 @@ class CustomCarEnv:
 
         # Filtra i valori inf sostituendoli con il max range del lidar
         lidar_front_values[np.isinf(lidar_front_values)] = self.lidar_front.getMaxRange()
-        lidar_front_values.sort()
-        front_lidar_smallest_distance = np.array([lidar_front_values[0]])
-        #print(f'distanza: {front_lidar_smallest_distance}')
-        #print(f'lidar shape: {front_lidar_smallest_distance.shape}') #DEBUG
+        #print(f'tot_front_lidar shape: {lidar_front_values.shape}') #DEBUG
         
-        lidar_rear_values = np.array(self.lidar_rear.getRangeImage(), dtype=np.float32) if self.lidar_rear else np.array([self.lidar.getMaxRange()] * len(self.lidar.getRangeImage()), dtype=np.float32)
-        lidar_rear_values[np.isinf(lidar_rear_values)] = self.lidar_rear.getMaxRange() if self.lidar_rear else self.lidar.getMaxRange()
-        lidar_rear_values.sort()
-        rear_lidar_smallest_distance = np.array([lidar_rear_values[0]])
+        num_samples = 10
+        step = max(1, len(lidar_front_values) // num_samples)
 
+        lidar_front_samples = lidar_front_values[::step][:num_samples]
+        lidar_front_samples = lidar_front_samples / self.lidar_front.getMaxRange() #normalization
 
-        obs_space = np.concatenate([left_velocity, right_velocity, pos, rotation, front_lidar_smallest_distance, rear_lidar_smallest_distance, orientation], dtype=np.float32)
+        #print(f'distanza lidar front: {lidar_front_samples}')
+        #print(f'lidar shape: {lidar_front_samples.shape}') #DEBUG
+        
+        lidar_rear_values = np.array(self.lidar_rear.getRangeImage(), dtype=np.float32)
+
+        lidar_rear_values[np.isinf(lidar_rear_values)] = self.lidar_rear.getMaxRange()
+
+        lidar_rear_samples = lidar_rear_values[::step][:num_samples]
+        lidar_rear_samples = lidar_rear_samples / self.lidar_rear.getMaxRange() #Normalization
+        #print(f'distanza lidar rear: {lidar_rear_samples}')
+        #print(f'lidar rear shape: {lidar_rear_samples.shape}') #DEBUG
+        #==========================================================
+
+        obs_space = np.concatenate(
+            [
+            left_velocity, right_velocity,
+            pos,
+            rotation,
+            lidar_front_samples,
+            lidar_rear_samples,
+            orientation
+            ], dtype=np.float32)
         #print(f'obs_space shape: {obs_space.shape}') #DEBUG
         return obs_space
 
@@ -231,15 +269,15 @@ class CustomCarEnv:
         left_v = obs[0]
         right_v = obs[1]
         pos = obs[2:5]
-        roll, pitch, yaw = obs[11:14]
-        front_lidar_val = obs[9]
-        rear_lidar_val = obs[10]
+        roll, pitch, yaw = obs[-3], obs[-2], obs[-1]
+        lidar_front_samples = obs[9:19]
+        lidar_rear_samples = obs[19:29]
 
         # === Distanza attuale dal target ===
         current_distance = np.linalg.norm(np.array([
-            self.target_pos[0] - pos[0],
-            self.target_pos[1]- pos[1],
-            self.target_pos[2] - pos[2]
+            self.target_pos[0] - (pos[0] * self.road_length), #Denormalization
+            self.target_pos[1]- (pos[1] * self.road_width),
+            self.target_pos[2] - (pos[2] * 1.0)
         ]))
         prev_distance = getattr(self, 'prev_distance', None)
 
@@ -255,12 +293,13 @@ class CustomCarEnv:
             proximity_reward = 1.0 - current_distance
 
         # === Penalità collisione netta ===
-        front_collision_penalty = -1.0 if front_lidar_val < self.collision_th else 0.0
+        normalized_th = self.collision_th / self.lidar_front.getMaxRange()
+        front_collision_penalty = -1.0 if np.any(lidar_front_samples < normalized_th) else 0.0
+        rear_collision_penalty = -1.0 if np.any(lidar_rear_samples < normalized_th) else 0.0
 
-        rear_collision_penalty = -1.0 if rear_lidar_val < self.collision_th else 0.0
 
         # === Penalità ribaltamento ===
-        fall_penalty = -1.0 if abs(roll) > 0.15 or abs(pitch) > 0.15 else 0.0
+        fall_penalty = -1.0 if abs(roll) > 0.2 or abs(pitch) > 0.2 else 0.0
 
         # === Penalità sterzata brusca (penalizza angoli sterzata grandi, ma non troppo) ===
         steer_left = self.front_left_steer.getTargetPosition()
@@ -271,16 +310,18 @@ class CustomCarEnv:
         # === Penalità per velocità differenziale fra ruote (zig-zag) ===
         velocity_penalty = -0.1 * abs(left_v - right_v)
 
-        # === Penalità proporzionale alla distanza minima lidar ===
-        # se è vicino a ostacoli, penalizzo proporzionalmente, altrimenti 0
+        #===Penalità vicinanza a ostacoli frontali (media distanza lidar frontale)===
         front_lidar_penalty = 0.0
-        if front_lidar_val < self.collision_th * 3:
-            # ad esempio penalità lineare decrescente da 0 a -0.5 tra collision_th*3 e 0
-            front_lidar_penalty = -0.5 * (self.collision_th * 3 - front_lidar_val) / (self.collision_th * 3)
+        mean_front_lidar = np.mean(lidar_front_samples)
+        if mean_front_lidar < normalized_th * 3:
+            front_lidar_penalty = -0.5 * (normalized_th * 3 - mean_front_lidar) / (normalized_th * 3)
+
         
+
         rear_lidar_penalty = 0.0
-        if rear_lidar_val < self.collision_th * 3:
-            rear_lidar_penalty = -0.5 * (self.collision_th * 3 - rear_lidar_val) / (self.collision_th * 3)
+        mean_rear_lidar = np.mean(lidar_rear_samples)
+        if mean_rear_lidar < normalized_th * 3:
+            rear_lidar_penalty = -0.5 * (normalized_th * 3 - mean_rear_lidar) / (normalized_th * 3)
 
         # === Bonus retromarcia lenta ===
         avg_speed = 0.5 * (left_v + right_v)
@@ -312,51 +353,70 @@ class CustomCarEnv:
 
     def _check_done(self, obs):
        
+        cause = None
+
         # Controllo urto: almeno uno dei 5 valori più piccoli deve essere sotto soglia
-        front_lidar_dist = obs[9]
-        rear_lidar_dist = obs[10]
+        front_lidar_dist = obs[9:19]
+        rear_lidar_dist = obs[19:29]
+
+        normalized_th = self.collision_th/self.lidar_front.getMaxRange()
+
         #print(last_5_lidar) #DEBUG
-        collision = front_lidar_dist < self.collision_th or rear_lidar_dist < self.collision_th
+        collision = np.any(front_lidar_dist < normalized_th) or np.any(rear_lidar_dist < normalized_th)
+        if collision:
+            cause = 'collision'
         #print(f'collision: {collision}') #DEBUG
 
         # Controllo timeout
         timeout = self.curr_timestep >= self.max_timesteps
+        if timeout and cause is None:
+            cause = 'timeout'
         #print(f'timeout: {timeout}') #DEBUG
 
         #controllo target
         #print(f'posizione del target: {self.target_pos}')
-        tesla_x = obs[2]
-        tesla_y = obs[3]
-        tesla_z = obs[4]
+        tesla_x = obs[2] * self.road_length #Denormalization
+        tesla_y = obs[3] * self.road_width
+        tesla_z = obs[4] * 1.0
         target_distance = np.sqrt((self.target_pos[0] - tesla_x)**2 +\
                                   (self.target_pos[1] - tesla_y)**2 +\
                                     (self.target_pos[2] - tesla_z)**2  )
+        if target_distance < self.distance_target_threshold and cause is None:
+            cause = 'target_reached'
+
         #print(f'target: {target_distance < self.distance_target_threshold}') #DEBUG
         
         #controllo caduta(ribaltamento)
-        roll, pitch = obs[11], obs[12]
-        falling = abs(roll) > 0.05 or abs(pitch) > 0.05  # circa 30°
+        roll, pitch = obs[-3], obs[-2]
+        falling = abs(roll) > 0.2 or abs(pitch) > 0.2 
+        if falling and cause is None:
+            cause = 'falling'
         #print(f'flipped: {falling}, roll: {roll:.2f}, pitch: {pitch:.2f}')  # DEBUG
 
         # === Anti-block system ===
-        curr_pos = np.array([obs[2], obs[3], obs[4]])  # posizione GPS corrente
-        avg_speed = 0.5 * (obs[0] + obs[1])  # media velocità ruote
+        curr_pos = np.array([obs[2]*self.road_length, obs[3]*self.road_width, obs[4] * 1.0])  # posizione GPS corrente
+        avg_speed = 0.5 * ((90 * obs[0] + 40) + (90 * obs[1] + 40))  # media velocità ruote
 
         if self.last_pos is not None:
             delta_movement = np.linalg.norm(curr_pos - self.last_pos)
 
-            if delta_movement < self.block_movement_threshold and abs(avg_speed) > self.min_speed_threshold:
+            if delta_movement < self.block_movement_threshold or abs(avg_speed) < self.min_speed_threshold:
                 self.block_counter += 1
             else:
                 self.block_counter = 0
         self.last_pos = curr_pos
 
         is_blocked = self.block_counter > self.max_block_steps
+        '''
         if is_blocked:
             print(f"[ANTI-BLOCK] Macchina bloccata per {self.block_counter} step consecutivi.")
-
+        '''
+        if is_blocked and cause is None:
+            cause = 'blocked'
         
-        return collision or timeout or target_distance < self.distance_target_threshold or falling or is_blocked
+        done = collision or timeout or target_distance < self.distance_target_threshold or falling or is_blocked
+
+        return done, cause
 
     def reset(self):
         self.left_motor.setVelocity(0.0)

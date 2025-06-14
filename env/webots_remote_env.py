@@ -13,7 +13,7 @@ class WebotsRemoteEnv(gym.Env):
         self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.conn.connect((self.host, self.port))
 
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(14,), dtype=np.float32)
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(32,), dtype=np.float32)
         '''
         OBSERVATION SPACE
         0   left_velocity
@@ -25,11 +25,11 @@ class WebotsRemoteEnv(gym.Env):
         6   rot_2
         7   rot_3
         8   rot_4
-        9   front_lidar
-        10  rear_lidar
-        11  roll
-        12  pitch
-        13  yawn
+        9-18   front_lidar
+        19-28  rear_lidar
+        29  roll
+        30  pitch
+        31  yawn
         '''
 
         self.action_space = spaces.Box(
@@ -52,14 +52,11 @@ class WebotsRemoteEnv(gym.Env):
         # Rotazioni
         obs[5:9] = np.clip(obs[5:9], -1, 1)  # already likely normalized
 
-        # Lidar
-        obs[9:14] = obs[9:14] / 2.0         # normalize by max lidar range
-
+        
         # Orientamenti (roll, pitch, yaw) ∈ [-π, π]
-        obs[14:17] = obs[14:17] / np.pi
+        obs[29:32] = obs[29:32] / np.pi
 
         return np.clip(obs, -1.0, 1.0)
-
 
     def step(self, action):
         msg = json.dumps({'cmd': 'step', 'action': action.tolist()}).encode()
