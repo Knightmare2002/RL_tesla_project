@@ -479,65 +479,87 @@ class CustomCarEnv:
             wp = waypoints_field.getMFVec3f(i)
             points.append((wp[0], wp[1]))
         
-        resampled_points = self.resample_path(points, 0.25) #dobbiamo aumentare il numero di waypoints, definiamo ogni 0.25 metri
-        #print(f'numero punti interpolati: {len(resampled_points)}') DEBUG
+        resampled_points = self.resample_path(points, 0.25)  # 0.25 m di risoluzione
 
-        # Interpolazione spline per avere traiettoria continua e derivata
+        # Interpolazione spline per traiettoria continua
         points = np.array(resampled_points)
         distances = np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))
-        distances = np.insert(distances, 0, 0)  # inserisci 0 all'inizio
+        distances = np.insert(distances, 0, 0)
         
         cs_x = CubicSpline(distances, points[:, 0])
         cs_y = CubicSpline(distances, points[:, 1])
         path_length = distances[-1]
 
-        placed_positions = []  # Lista posizioni (x,y) ostacoli e target
+        placed_positions = []  # Lista posizioni (x,y) di target e ostacoli
         
-        def sample_position(min_dist_from_car=10.0, min_dist_between=7.0):
+        def sample_position(min_dist_from_car=15.0, min_dist_between=10.0):
             max_attempts = 1000
             for _ in range(max_attempts):
-                # Campiona una posizione casuale lungo la lunghezza della strada
                 s = np.random.uniform(0, path_length)
                 center_x = cs_x(s)
                 center_y = cs_y(s)
 
-                # Calcola tangente (derivata prima)
                 dx = cs_x(s, 1)
                 dy = cs_y(s, 1)
                 tangent = np.array([dx, dy])
                 tangent /= np.linalg.norm(tangent)
 
-                # Calcola la normale (perpendicolare al tangente)
                 normal = np.array([-tangent[1], tangent[0]])
 
-                # Scegli uno spostamento laterale random entro i limiti della larghezza strada
-                lateral_offset = np.random.uniform(-self.road_width/2 + 0.5, self.road_width/2 - 0.5)  # 0.5 margine per sicurezza
-
+                lateral_offset = np.random.uniform(-self.road_width/2 + 0.5, self.road_width/2 - 0.5)
                 pos = np.array([center_x, center_y]) + lateral_offset * normal
 
-                # Controllo distanza minima da macchina
                 car_pos = np.array(self.gps.getValues()[:2]) if self.gps else np.array([0,0])
                 dist_from_car = np.linalg.norm(pos - car_pos)
                 if dist_from_car < min_dist_from_car:
                     continue
 
-                # Controllo distanza da ostacoli e target già piazzati
                 if any(np.linalg.norm(pos - p) < min_dist_between for p in placed_positions):
                     continue
 
                 return pos
             raise RuntimeError("Non sono riuscito a piazzare un oggetto rispettando le distanze minime")
 
+        # Prendi posizione macchina aggiornata
+        '''DEBUG
+        car_pos = np.array(self.gps.getValues()[:2]) if self.gps else np.array([0, 0])
+        print("=== DEBUG POSIZIONI E DISTANZE ===")
+        print(f"Posizione macchina aggiornata: ({car_pos[0]:.3f}, {car_pos[1]:.3f})")
+        print("----------------------------------")
+        '''
+
         # Posiziona target
-        target_pos = sample_position(min_dist_from_car=10.0, min_dist_between=5.0)
+        target_pos = sample_position(min_dist_from_car=15.0, min_dist_between=10.0)
         self.target_translation.setSFVec3f([target_pos[0], target_pos[1], self.target_translation.getSFVec3f()[2]])
         placed_positions.append(target_pos)
 
+        '''DEBUG
+        dist_target_car = np.linalg.norm(target_pos - car_pos)
+        print(f"Target posizionato in: ({target_pos[0]:.3f}, {target_pos[1]:.3f})")
+        print(f"Distanza target -> macchina: {dist_target_car:.3f} m")
+        print("----------------------------------")
+        '''
+
         # Posiziona ostacoli
-        for obj in self.random_objects:
-            obst_pos = sample_position(min_dist_from_car=10.0, min_dist_between=5.0)
+        for i, obj in enumerate(self.random_objects):
+            obst_pos = sample_position(min_dist_from_car=15.0, min_dist_between=10.0)
             obj['translation'].setSFVec3f([obst_pos[0], obst_pos[1], obj['translation'].getSFVec3f()[2]])
             placed_positions.append(obst_pos)
+
+            ''' DEBUG
+            dist_obst_car = np.linalg.norm(obst_pos - car_pos)
+            print(f"Ostacolo {i} posizionato in: ({obst_pos[0]:.3f}, {obst_pos[1]:.3f})")
+            print(f"Distanza ostacolo {i} -> macchina: {dist_obst_car:.3f} m")
+
+            # Distanze ostacolo i verso tutti gli altri (compreso target e ostacoli precedenti)
+            print(f"Distanze ostacolo {i} -> altri oggetti:")
+            for j, p in enumerate(placed_positions[:-1]):  # tutti meno l'ultimo aggiunto (ostacolo i)
+                dist = np.linalg.norm(obst_pos - p)
+                tipo = "Target" if j == 0 else f"Ostacolo {j-1}"
+                print(f"  - a {tipo} ({p[0]:.3f}, {p[1]:.3f}): {dist:.3f} m")
+            print("----------------------------------")
+            '''
+
 
     def udr(self):
         #=====Posizione iniziale random della macchina=====
