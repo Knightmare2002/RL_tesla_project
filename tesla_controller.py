@@ -58,12 +58,15 @@ class CustomCarEnv:
         self.front_left_steer.setPosition(0.0)
         self.front_right_steer.setPosition(0.0)
 
+        '''
         self.target_x = 59.4
         self.target_y = 0
         self.target_z = 0.12
+        '''
         
         self.target_node = self.robot.getFromDef('target')
         self.target_translation = self.target_node.getField('translation')
+        self.target_pos = self.target_translation.getSFVec3f()
         self.distance_target_threshold = 2
         #==================
 
@@ -209,9 +212,9 @@ class CustomCarEnv:
 
         # === Distanza attuale dal target ===
         current_distance = np.linalg.norm(np.array([
-            self.target_x - pos[0],
-            self.target_y - pos[1],
-            self.target_z - pos[2]
+            self.target_pos[0] - pos[0],
+            self.target_pos[1]- pos[1],
+            self.target_pos[2] - pos[2]
         ]))
         prev_distance = getattr(self, 'prev_distance', None)
 
@@ -288,12 +291,13 @@ class CustomCarEnv:
         #print(f'timeout: {timeout}') #DEBUG
 
         #controllo target
+        print(f'posizione del target: {self.target_pos}')
         tesla_x = obs[2]
         tesla_y = obs[3]
         tesla_z = obs[4]
-        target_distance = np.sqrt((self.target_x - tesla_x)**2 +\
-                                  (self.target_y - tesla_y)**2 +\
-                                    (self.target_z - tesla_z)**2  )
+        target_distance = np.sqrt((self.target_pos[0] - tesla_x)**2 +\
+                                  (self.target_pos[1] - tesla_y)**2 +\
+                                    (self.target_pos[2] - tesla_z)**2  )
         #print(f'target: {target_distance < self.distance_target_threshold}') #DEBUG
         
         #controllo caduta(ribaltamento)
@@ -317,7 +321,7 @@ class CustomCarEnv:
         is_blocked = self.block_counter > self.max_block_steps
         if is_blocked:
             print(f"[ANTI-BLOCK] Macchina bloccata per {self.block_counter} step consecutivi.")
-#
+
         
         return collision or timeout or target_distance < self.distance_target_threshold or falling or is_blocked
 
@@ -340,6 +344,7 @@ class CustomCarEnv:
         
         if not self.udr_called:
             self.udr()
+            self.target_pos = self.target_translation.getSFVec3f()
             self.udr_called = True
 
         self.car_node.setVelocity([0, 0, 0, 0, 0, 0]) #reset fisico totale della macchina
