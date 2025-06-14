@@ -1,9 +1,8 @@
 from controller import Supervisor
+from scipy.interpolate import CubicSpline
 import numpy as np
 import socket
 import json
-
-#TODO INSERISCI UN SENSORE POSTERIORE PER LA RETROMARCIA IDENTICO A QUELLO FRONTALE
 
 class CustomCarEnv:
     robot = Supervisor()
@@ -105,6 +104,8 @@ class CustomCarEnv:
                     'translation': node.getField('translation')
             })
             i += 1
+        self.num_obst = i-1
+        #print(f'Numero ostacoli trovati: {self.num_obst}') DEBUG
         #========================
 
         #======Anti-Blockage=====
@@ -164,18 +165,23 @@ class CustomCarEnv:
     def _get_obs(self):
         left_velocity = np.array([self.left_motor.getVelocity()], dtype=np.float32)
         #print(f'left_v: {left_velocity}') #DEBUG
+        #print(f'l_velocity shape: {left_velocity.shape}') #DEBUG
 
         right_velocity = np.array([self.right_motor.getVelocity()], dtype=np.float32)
         #print(f'right_v: {right_velocity}') #DEBUG
+        #print(f'r_velocity shape: {right_velocity.shape}') #DEBUG
 
         pos = self.gps.getValues() if self.gps else [0.0, 0.0, 0.0]
         #print(f'pos: {pos}') #DEBUG
+        #print(f'pos shape: {len(pos)}') #DEBUG
 
         orientation = self.imu.getRollPitchYaw() if self.imu else [0.0, 0.0, 0.0]
         #print(f'orientation: {orientation}') #DEBUG
+        #print(f'orientation shape: {len(orientation)}') #DEBUG
 
         rotation = np.array(self.rotation_field.getSFVec3f(), dtype=np.float32)
         #print(f'rot: {rotation}') #DEBUG
+        #print(f'rotation shape: {rotation.shape}') #DEBUG
 
         lidar_values = self.lidar.getRangeImage() #array di distanze
         #===DEBUG===
@@ -186,9 +192,12 @@ class CustomCarEnv:
         lidar_values.sort()
         top_5_smallest_distances = lidar_values[:5] #valid_distances[:5] 
         #print(f'distanza: {top_5_smallest_distances}')
+        #print(f'lidar shape: {top_5_smallest_distances.shape}') #DEBUG
         #======
 
-        return np.concatenate([left_velocity, right_velocity, pos, rotation, top_5_smallest_distances, orientation], dtype=np.float32)
+        obs_space = np.concatenate([left_velocity, right_velocity, pos, rotation, top_5_smallest_distances, orientation], dtype=np.float32)
+        #print(f'obs_space shape: {obs_space.shape}') #DEBUG
+        return obs_space
 
     def _compute_reward(self, obs):
         # === Parse observation ===
@@ -268,9 +277,10 @@ class CustomCarEnv:
 
     def _check_done(self, obs):
        
-        # Controllo urto: tutti e 5 i valori più piccoli devono essere sotto soglia
-        last_5_lidar = obs[-5:]
-        collision = all(d < self.collision_th for d in last_5_lidar)
+        # Controllo urto: almeno uno dei 5 valori più piccoli deve essere sotto soglia
+        last_5_lidar = obs[9:14]
+        #print(last_5_lidar) #DEBUG
+        collision = any(d < self.collision_th for d in last_5_lidar)
         #print(f'collision: {collision}') #DEBUG
 
         # Controllo timeout
@@ -345,73 +355,104 @@ class CustomCarEnv:
 
         return self._get_obs()
 
+    def resample_path(self, points, resolution=1.0):
+        resampled = []
+        for i in range(len(points) - 1):
+            p0 = np.array(points[i])
+            p1 = np.array(points[i+1])
+            segment_vec = p1 - p0
+            segment_len = np.linalg.norm(segment_vec)
+            n_steps = max(int(segment_len / resolution), 1)
+
+            for j in range(n_steps):
+                t = j / n_steps
+                interp_point = (1 - t) * p0 + t * p1
+                resampled.append(tuple(interp_point))
+        resampled.append(points[-1])  # include last point
+        return resampled
+
+    def place_objects_randomly(self):
+        #=====Ottieni waypoints 2D (x,y)=====
+        road_node = self.robot.getFromDef('road')
+        waypoints_field = road_node.getField('wayPoints')
+        n_points = waypoints_field.getCount()
+        points = []
+        for i in range(n_points):
+            wp = waypoints_field.getMFVec3f(i)
+            points.append((wp[0], wp[1]))
+        
+        resampled_points = self.resample_path(points, 0.25) #dobbiamo aumentare il numero di waypoints, definiamo ogni 0.25 metri
+        #print(f'numero punti interpolati: {len(resampled_points)}') DEBUG
+
+        # Interpolazione spline per avere traiettoria continua e derivata
+        points = np.array(resampled_points)
+        distances = np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))
+        distances = np.insert(distances, 0, 0)  # inserisci 0 all'inizio
+        
+        cs_x = CubicSpline(distances, points[:, 0])
+        cs_y = CubicSpline(distances, points[:, 1])
+        path_length = distances[-1]
+
+        placed_positions = []  # Lista posizioni (x,y) ostacoli e target
+        
+        def sample_position(min_dist_from_car=10.0, min_dist_between=7.0):
+            max_attempts = 1000
+            for _ in range(max_attempts):
+                # Campiona una posizione casuale lungo la lunghezza della strada
+                s = np.random.uniform(0, path_length)
+                center_x = cs_x(s)
+                center_y = cs_y(s)
+
+                # Calcola tangente (derivata prima)
+                dx = cs_x(s, 1)
+                dy = cs_y(s, 1)
+                tangent = np.array([dx, dy])
+                tangent /= np.linalg.norm(tangent)
+
+                # Calcola la normale (perpendicolare al tangente)
+                normal = np.array([-tangent[1], tangent[0]])
+
+                # Scegli uno spostamento laterale random entro i limiti della larghezza strada
+                lateral_offset = np.random.uniform(-self.road_width/2 + 0.5, self.road_width/2 - 0.5)  # 0.5 margine per sicurezza
+
+                pos = np.array([center_x, center_y]) + lateral_offset * normal
+
+                # Controllo distanza minima da macchina
+                car_pos = np.array(self.gps.getValues()[:2]) if self.gps else np.array([0,0])
+                dist_from_car = np.linalg.norm(pos - car_pos)
+                if dist_from_car < min_dist_from_car:
+                    continue
+
+                # Controllo distanza da ostacoli e target già piazzati
+                if any(np.linalg.norm(pos - p) < min_dist_between for p in placed_positions):
+                    continue
+
+                return pos
+            raise RuntimeError("Non sono riuscito a piazzare un oggetto rispettando le distanze minime")
+
+        # Posiziona target
+        target_pos = sample_position(min_dist_from_car=10.0, min_dist_between=5.0)
+        self.target_translation.setSFVec3f([target_pos[0], target_pos[1], self.target_translation.getSFVec3f()[2]])
+        placed_positions.append(target_pos)
+
+        # Posiziona ostacoli
+        for obj in self.random_objects:
+            obst_pos = sample_position(min_dist_from_car=10.0, min_dist_between=5.0)
+            obj['translation'].setSFVec3f([obst_pos[0], obst_pos[1], obj['translation'].getSFVec3f()[2]])
+            placed_positions.append(obst_pos)
+
     def udr(self):
-            #=====Posizione iniziale random della macchina=====
-            rand_x = np.random.uniform(0, 5)
-            rand_y = np.random.uniform(self.spawn_range_y[0]+1, self.spawn_range_y[1]-1)  # leggermente dentro i bordi strada
-            self.translation_field.setSFVec3f([rand_x, rand_y, 0.7])
+        #=====Posizione iniziale random della macchina=====
+        rand_x = np.random.uniform(0, 5)
+        rand_y = np.random.uniform(self.spawn_range_y[0] + 1, self.spawn_range_y[1] - 1)  # leggermente dentro i bordi strada
+        self.translation_field.setSFVec3f([rand_x, rand_y, 0.7])
 
-            #=====Posizione iniziale random del target=====
-            # Cambia range x in modo che il target sia vicino alla fine strada (es. ultimi 10m)
-            self.target_x = np.random.uniform(self.road_length - 10, self.road_length - 5)
-            self.target_y = np.random.uniform(self.spawn_range_y[0]+1, self.spawn_range_y[1]-1)
-            self.target_translation.setSFVec3f([self.target_x, self.target_y, 0.12])  # z bassa per essere sul terreno
+        #=====Rotazione iniziale random della macchina=====
+        angle = np.random.uniform(-np.pi, np.pi)
+        self.rotation_field.setSFRotation([0, 0, 1, angle])  # ruota intorno a z
 
-
-            #=====Rotazione iniziale random della macchina=====
-            angle = np.random.uniform(-np.pi, np.pi)
-            self.rotation_field.setSFRotation([0, 0, 1, angle]) #ruota intro z
-
-            #===== Randomizzazione con distanza minima tra ostacoli =====
-            range_x = [10, self.road_length - 10]  # ostacoli posizionati dopo i primi 10m e prima degli ultimi 10m
-            range_y = [self.spawn_range_y[0]+1, self.spawn_range_y[1]-1]
-            z = 0.4
-            min_dist = self.min_dist_obj
-
-            placed_positions = []
-
-            # Includiamo la posizione della macchina e del target per evitare sovrapposizioni
-            car_pos = np.array([rand_x, rand_y])
-            target_pos = np.array([self.target_x, self.target_y])
-            placed_positions.append(car_pos)
-            placed_positions.append(target_pos)
-
-            # Controlla quanti ostacoli abbiamo nel mondo e quanti ne servono almeno
-            num_objects = len(self.random_objects)
-            num_obstacles_to_place = max(num_objects, self.min_num_obst)
-
-            # Se il numero di ostacoli esistenti è minore di min_num_obstacles, avvisa
-            if num_objects < self.min_num_obst:
-                print(f"[AVVISO] Numero ostacoli disponibili ({num_objects}) < numero minimo consigliato ({self.min_num_obst}).")
-
-            # Ciclo per posizionare ostacoli, minimo num_obstacles_to_place
-            for i in range(num_obstacles_to_place):
-                # Se ci sono meno ostacoli nel mondo dei posti da posizionare, ricicliamo da random_objects o creiamo logica extra (qui semplice riciclo)
-                obj = self.random_objects[i % num_objects]
-
-                is_position_valid = False
-                max_attempts = 200  # aumentato per maggiore chance
-                attempt = 0
-
-                while not is_position_valid and attempt < max_attempts:
-                    new_x = np.random.uniform(*range_x)
-                    new_y = np.random.uniform(*range_y)
-                    new_position = np.array([new_x, new_y])
-
-                    # Controllo distanza minima da tutte le posizioni già piazzate
-                    is_overlapping = any(
-                        np.linalg.norm(new_position - pos) < min_dist
-                        for pos in placed_positions
-                    )
-
-                    if not is_overlapping:
-                        is_position_valid = True
-                        obj['translation'].setSFVec3f([new_x, new_y, z])
-                        placed_positions.append(new_position)
-                    attempt += 1
-
-                if attempt == max_attempts:
-                    print(f"[AVVISO] Impossibile posizionare ostacolo dopo {max_attempts} tentativi.")
+        #=====Posizioniamo oggetti e target nel mondo=====
+        self.place_objects_randomly()
 
 
 
