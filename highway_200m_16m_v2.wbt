@@ -8,13 +8,12 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/rocks/protos/Rock.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/vehicles/protos/bmw/BmwX5Simple.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/traffic/protos/WorkBarrier.proto"
-EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/traffic/protos/TrafficCone.proto"
 
 WorldInfo {
 }
 Viewpoint {
-  orientation -0.19621791855464107 -0.06318550345862704 0.9785224170098324 3.7521121885848956
-  position 278.2660575956504 135.53517966517703 90.63179566239248
+  orientation -0.15202155272803367 -0.060989096988473414 0.9864936784159788 3.895317880419498
+  position 257.6110010015168 167.20251687134476 79.09809190095383
   follow "tesla3"
   followType "None"
 }
@@ -95,24 +94,19 @@ DEF ostacolo_7 Rock {
   name "roccia(3)"
   scale 23
 }
-DEF ostacolo_8 Rock {
-  translation 82.0515 4.85135 0.4
-  name "roccia(4)"
-  scale 23
-}
-DEF ostacolo_9 BmwX5Simple {
+DEF ostacolo_8 BmwX5Simple {
   translation 47.3632 3.28492 0.4
   name "macchina"
 }
-DEF ostacolo_10 BmwX5Simple {
+DEF ostacolo_9 BmwX5Simple {
   translation 63.8332 3.28492 0.5
   name "macchina(1)"
 }
-DEF ostacolo_11 BmwX5Simple {
+DEF ostacolo_10 BmwX5Simple {
   translation 85.9032 12.5649 0.7
   name "macchina(3)"
 }
-DEF ostacolo_12 BmwX5Simple {
+DEF ostacolo_11 BmwX5Simple {
   translation 94.7332 8.61492 0.8
   name "macchina(4)"
 }
@@ -136,11 +130,4 @@ DEF ostacolo_3 WorkBarrier {
 DEF ostacolo_4 WorkBarrier {
   translation 28.75 5.36 0
   name "work barrier(1)"
-}
-DEF ostacolo_13 TrafficCone {
-  translation 17.46 -2.85 0
-}
-DEF ostacolo_14 TrafficCone {
-  translation 27.34 -2.85 0
-  name "traffic cone(1)"
 }
