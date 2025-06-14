@@ -493,7 +493,7 @@ class CustomCarEnv:
         placed_positions = []  # Lista posizioni (x,y) di target e ostacoli
         
         def sample_position(min_dist_from_car=15.0, min_dist_between=10.0):
-            max_attempts = 1000
+            max_attempts = 2000
             for _ in range(max_attempts):
                 s = np.random.uniform(0, path_length)
                 center_x = cs_x(s)
