@@ -27,11 +27,21 @@ class CustomCarEnv:
             print("ERRORE: Attuatori di sterzo non trovati.")
             exit()
 
-        self.lidar = self.robot.getDevice('lidar_front')
-        self.lidar.enable(self.timestep)
-        self.lidar.enablePointCloud() #attiva la nuvola di punti
+        #=====Gestione lidars=====
+        self.lidar_front = self.robot.getDevice('lidar_front')
+        self.lidar_front.enable(self.timestep)
+        self.lidar_front.enablePointCloud() #attiva la nuvola di punti
         
+        self.lidar_rear = self.robot.getDevice('lidar_rear')
+        if self.lidar_rear is not None:
+            self.lidar_rear.enable(self.timestep)
+            self.lidar_rear.enablePointCloud()
+        else:
+            print("AVVISO: Lidar posteriore non trovato.")
+
         self.collision_th = 0.5
+        #==========================
+
         self.max_timesteps = 2000 #settato a 1000 per 100m di percorso
         self.curr_timestep = 0
         self.curr_episode = 0
@@ -166,6 +176,7 @@ class CustomCarEnv:
         return obs, reward, False, {}
 
     def _get_obs(self):
+        #=====Gestione velocità=====
         left_velocity = np.array([self.left_motor.getVelocity()], dtype=np.float32)
         #print(f'left_v: {left_velocity}') #DEBUG
         #print(f'l_velocity shape: {left_velocity.shape}') #DEBUG
@@ -173,32 +184,45 @@ class CustomCarEnv:
         right_velocity = np.array([self.right_motor.getVelocity()], dtype=np.float32)
         #print(f'right_v: {right_velocity}') #DEBUG
         #print(f'r_velocity shape: {right_velocity.shape}') #DEBUG
+        #===========================
 
+        #=====Gestione posizione gps=====
         pos = self.gps.getValues() if self.gps else [0.0, 0.0, 0.0]
         #print(f'pos: {pos}') #DEBUG
         #print(f'pos shape: {len(pos)}') #DEBUG
+        #================================
 
+        #=====Gestione ribaltamento=====
         orientation = self.imu.getRollPitchYaw() if self.imu else [0.0, 0.0, 0.0]
         #print(f'orientation: {orientation}') #DEBUG
         #print(f'orientation shape: {len(orientation)}') #DEBUG
+        #===============================
 
+        ##=====Gestione rotazione=====
         rotation = np.array(self.rotation_field.getSFVec3f(), dtype=np.float32)
         #print(f'rot: {rotation}') #DEBUG
         #print(f'rotation shape: {rotation.shape}') #DEBUG
+        #============================
 
-        lidar_values = self.lidar.getRangeImage() #array di distanze
+        ##=====Gestione lidars=====
+        lidar_front_values = self.lidar_front.getRangeImage() #array di distanze
         #===DEBUG===
-        lidar_values = np.array(self.lidar.getRangeImage(), dtype=np.float32)
+        lidar_front_values = np.array(self.lidar_front.getRangeImage(), dtype=np.float32)
 
         # Filtra i valori inf sostituendoli con il max range del lidar
-        lidar_values[np.isinf(lidar_values)] = self.lidar.getMaxRange()
-        lidar_values.sort()
-        top_5_smallest_distances = lidar_values[:5] #valid_distances[:5] 
-        #print(f'distanza: {top_5_smallest_distances}')
-        #print(f'lidar shape: {top_5_smallest_distances.shape}') #DEBUG
-        #======
+        lidar_front_values[np.isinf(lidar_front_values)] = self.lidar_front.getMaxRange()
+        lidar_front_values.sort()
+        front_lidar_smallest_distance = np.array([lidar_front_values[0]])
+        #print(f'distanza: {front_lidar_smallest_distance}')
+        #print(f'lidar shape: {front_lidar_smallest_distance.shape}') #DEBUG
+        
+        lidar_rear_values = np.array(self.lidar_rear.getRangeImage(), dtype=np.float32) if self.lidar_rear else np.array([self.lidar.getMaxRange()] * len(self.lidar.getRangeImage()), dtype=np.float32)
+        lidar_rear_values[np.isinf(lidar_rear_values)] = self.lidar_rear.getMaxRange() if self.lidar_rear else self.lidar.getMaxRange()
+        lidar_rear_values.sort()
+        rear_lidar_smallest_distance = np.array([lidar_rear_values[0]])
 
-        obs_space = np.concatenate([left_velocity, right_velocity, pos, rotation, top_5_smallest_distances, orientation], dtype=np.float32)
+
+        obs_space = np.concatenate([left_velocity, right_velocity, pos, rotation, front_lidar_smallest_distance, rear_lidar_smallest_distance, orientation], dtype=np.float32)
         #print(f'obs_space shape: {obs_space.shape}') #DEBUG
         return obs_space
 
@@ -207,8 +231,9 @@ class CustomCarEnv:
         left_v = obs[0]
         right_v = obs[1]
         pos = obs[2:5]
-        roll, pitch, yaw = obs[14:17]
-        lidar_vals = obs[9:14]
+        roll, pitch, yaw = obs[11:14]
+        front_lidar_val = obs[9]
+        rear_lidar_val = obs[10]
 
         # === Distanza attuale dal target ===
         current_distance = np.linalg.norm(np.array([
@@ -230,7 +255,9 @@ class CustomCarEnv:
             proximity_reward = 1.0 - current_distance
 
         # === Penalità collisione netta ===
-        collision_penalty = -1.0 if np.any(lidar_vals < self.collision_th) else 0.0
+        front_collision_penalty = -1.0 if front_lidar_val < self.collision_th else 0.0
+
+        rear_collision_penalty = -1.0 if rear_lidar_val < self.collision_th else 0.0
 
         # === Penalità ribaltamento ===
         fall_penalty = -1.0 if abs(roll) > 0.15 or abs(pitch) > 0.15 else 0.0
@@ -245,12 +272,15 @@ class CustomCarEnv:
         velocity_penalty = -0.1 * abs(left_v - right_v)
 
         # === Penalità proporzionale alla distanza minima lidar ===
-        min_lidar_dist = np.min(lidar_vals)
         # se è vicino a ostacoli, penalizzo proporzionalmente, altrimenti 0
-        lidar_penalty = 0.0
-        if min_lidar_dist < self.collision_th * 3:
+        front_lidar_penalty = 0.0
+        if front_lidar_val < self.collision_th * 3:
             # ad esempio penalità lineare decrescente da 0 a -0.5 tra collision_th*3 e 0
-            lidar_penalty = -0.5 * (self.collision_th * 3 - min_lidar_dist) / (self.collision_th * 3)
+            front_lidar_penalty = -0.5 * (self.collision_th * 3 - front_lidar_val) / (self.collision_th * 3)
+        
+        rear_lidar_penalty = 0.0
+        if rear_lidar_val < self.collision_th * 3:
+            rear_lidar_penalty = -0.5 * (self.collision_th * 3 - rear_lidar_val) / (self.collision_th * 3)
 
         # === Bonus retromarcia lenta ===
         avg_speed = 0.5 * (left_v + right_v)
@@ -267,11 +297,13 @@ class CustomCarEnv:
             2.0 * progress_reward
             + 3.0 * proximity_reward
             + reverse_bonus
-            + collision_penalty
+            + front_collision_penalty
+            + rear_collision_penalty
             + fall_penalty
             + steer_penalty
             + velocity_penalty
-            + lidar_penalty
+            + front_lidar_penalty
+            + rear_lidar_penalty
             + target_bonus
             + time_penalty
         )
@@ -281,9 +313,10 @@ class CustomCarEnv:
     def _check_done(self, obs):
        
         # Controllo urto: almeno uno dei 5 valori più piccoli deve essere sotto soglia
-        last_5_lidar = obs[9:14]
+        front_lidar_dist = obs[9]
+        rear_lidar_dist = obs[10]
         #print(last_5_lidar) #DEBUG
-        collision = any(d < self.collision_th for d in last_5_lidar)
+        collision = front_lidar_dist < self.collision_th or rear_lidar_dist < self.collision_th
         #print(f'collision: {collision}') #DEBUG
 
         # Controllo timeout
@@ -291,7 +324,7 @@ class CustomCarEnv:
         #print(f'timeout: {timeout}') #DEBUG
 
         #controllo target
-        print(f'posizione del target: {self.target_pos}')
+        #print(f'posizione del target: {self.target_pos}')
         tesla_x = obs[2]
         tesla_y = obs[3]
         tesla_z = obs[4]
@@ -301,7 +334,7 @@ class CustomCarEnv:
         #print(f'target: {target_distance < self.distance_target_threshold}') #DEBUG
         
         #controllo caduta(ribaltamento)
-        roll, pitch = obs[14], obs[15]
+        roll, pitch = obs[11], obs[12]
         falling = abs(roll) > 0.05 or abs(pitch) > 0.05  # circa 30°
         #print(f'flipped: {falling}, roll: {roll:.2f}, pitch: {pitch:.2f}')  # DEBUG
 
