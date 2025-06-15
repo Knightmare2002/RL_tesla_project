@@ -13,7 +13,7 @@ WorldInfo {
 }
 Viewpoint {
   orientation -0.22332622362804946 -0.22077677072814764 0.9494119313274325 4.649050070003774
-  position 109.84089276854864 197.9608150993112 120.35545498975006
+  position 282.08880709541955 601.5457238911529 298.05228171068774
 }
 Background {
   skyColor [
@@ -85,11 +85,11 @@ DEF ostacolo_3 BmwX5Simple {
   name "vehicle(4)"
 }
 DEF ostacolo_4 OilBarrel {
-  translation 68.6893 -25.9031 0.44
+  translation 68.6893 -3.1231 0.44
   rotation 0 0 1 4.692820414042842e-06
 }
 DEF ostacolo_5 OilBarrel {
-  translation 62.9675 -40.694 0.44
+  translation 62.9675 1.866 0.44
   rotation 0 0 1 4.692820414042842e-06
   name "oil barrel(1)"
 }
@@ -125,4 +125,5 @@ Road {
     520 20 0
   ]
   splineSubdivision 5000
+  roadBoundingObject TRUE
 }

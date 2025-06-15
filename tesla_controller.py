@@ -520,7 +520,7 @@ class CustomCarEnv:
         #=====Posizione iniziale random della macchina=====
         rand_x = self.default_car_pos[0] + np.random.uniform(-3, 5)
         rand_y = np.random.uniform(self.spawn_range_y[0] + 1.5, self.spawn_range_y[1] - 1.5)  # leggermente dentro i bordi strada
-        self.translation_field.setSFVec3f([rand_x, rand_y, 0.7])
+        self.translation_field.setSFVec3f([rand_x, rand_y, 0.4])
 
         #=====Rotazione iniziale random della macchina=====
         angle = np.random.uniform(-np.pi, np.pi)
