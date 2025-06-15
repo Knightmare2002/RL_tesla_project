@@ -122,7 +122,7 @@ class CustomCarEnv:
                     'translation': node.getField('translation'),
                     'rotation':node.getField('rotation')
             })
-            print(f'coordinate ostacolo {i}: {node.getField('translation').getSFVec3f()}') #DEBUG
+            #print(f'coordinate ostacolo {i}: {node.getField('translation').getSFVec3f()}') #DEBUG
             i += 1
         self.num_obst = i-1
         #print(f'Numero ostacoli trovati: {self.num_obst}') DEBUG
@@ -461,7 +461,7 @@ class CustomCarEnv:
     def assign_objects_and_target(self, min_distance=3.0, num_obj=7):
         # Definizione dei rettilinei: start, end, coordinata costante, asse costante
         straight_sections = [
-            {'start': 0, 'end': 120, 'const': 0, 'axis': 'y'},      # rettilineo 1
+            {'start': 15, 'end': 120, 'const': 0, 'axis': 'y'},      # rettilineo 1
             {'start': 180, 'end': 260, 'const': -20, 'axis': 'y'}, # rettilineo 2
             {'start': 320, 'end': 400, 'const': 0, 'axis': 'y'},  # rettilineo 3
             {'start': 460, 'end': 520, 'const': 20, 'axis': 'y'}    # rettilineo 4
@@ -493,7 +493,7 @@ class CustomCarEnv:
                 attempts = 0
                 while True:
                     coord = random.uniform(section['start'], section['end'])
-                    const_offset = random.uniform((-self.road_width / 2)-0.25, (self.road_width / 2)-0.25)
+                    const_offset = random.uniform((-self.road_width / 2)+0.75, (self.road_width / 2)-0.75)
 
                     if all(abs(coord - other) >= min_distance for other in placed_coords):
                         placed_coords.append(coord)
@@ -501,7 +501,7 @@ class CustomCarEnv:
 
                     attempts += 1
                     if attempts > 100:
-                        print(f"Impossibile posizionare {node.getDef()} nel rettilineo {i+1}")
+                        #print(f"Impossibile posizionare {node.getDef()} nel rettilineo {i+1}")
                         break
 
                 # Costruisci la nuova posizione
@@ -514,12 +514,12 @@ class CustomCarEnv:
                 translation_field.setSFVec3f(pos)
                 rotation_field.setSFRotation([0, 0, -1, 0])
 
-                print(f"{node.getDef()} posizionato in {pos} (rettilineo {i+1}), rotazione settata")
+                #print(f"{node.getDef()} posizionato in {pos} (rettilineo {i+1}), rotazione settata")
 
     def udr(self):
         #=====Posizione iniziale random della macchina=====
         rand_x = self.default_car_pos[0] + np.random.uniform(-3, 5)
-        rand_y = np.random.uniform(self.spawn_range_y[0] + 1, self.spawn_range_y[1] - 1)  # leggermente dentro i bordi strada
+        rand_y = np.random.uniform(self.spawn_range_y[0] + 1.5, self.spawn_range_y[1] - 1.5)  # leggermente dentro i bordi strada
         self.translation_field.setSFVec3f([rand_x, rand_y, 0.7])
 
         #=====Rotazione iniziale random della macchina=====
