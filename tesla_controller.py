@@ -1,6 +1,6 @@
 from controller import Supervisor
-from scipy.interpolate import CubicSpline
 import numpy as np
+import random
 import socket
 import json
 
@@ -42,18 +42,19 @@ class CustomCarEnv:
         self.collision_th = 0.5
         #==========================
 
-        self.max_timesteps = 2000 #settato a 1000 per 100m di percorso
+        self.max_timesteps = 5000 #settato a 1000 per 100m di percorso
         self.curr_timestep = 0
         self.curr_episode = 0
 
         #=====Road settings=====
-        self.road_length = 200
-        self.road_width = 10
+        self.road_length = 520
+        self.road_width = 8
 
         #=====Supervisor: ottieni riferimento al nodo Tesla======
         self.car_node = self.robot.getFromDef("tesla3")
         self.translation_field = self.car_node.getField('translation')
         self.rotation_field = self.car_node.getField('rotation')
+        self.default_car_pos = self.translation_field.getSFVec3f()
 
         if self.left_motor is None or self.right_motor is None:
             print("ERRORE: Motori non trovati.")
@@ -78,6 +79,13 @@ class CustomCarEnv:
         self.target_translation = self.target_node.getField('translation')
         self.target_pos = self.target_translation.getSFVec3f()
         self.distance_target_threshold = 2
+        print(f'Coordinate target: {self.target_pos}') #DEBUG
+
+        self.target = {
+            'node':self.target_node,
+            'translation': self.target_translation,
+            'rotation':self.target_node.getField('rotation')
+        }
         #==================
 
         #=====Sensori=====
@@ -102,9 +110,6 @@ class CustomCarEnv:
         self.spawn_range_x = (0, self.road_length)
         self.spawn_range_y = (-self.road_width/2, self.road_width/2)
 
-        self.min_dist_obj = 3.0
-        self.min_num_obst = 12
-
         self.random_objects = []
         i=0
 
@@ -114,8 +119,10 @@ class CustomCarEnv:
                 break
             self.random_objects.append({
                     'node': node,
-                    'translation': node.getField('translation')
+                    'translation': node.getField('translation'),
+                    'rotation':node.getField('rotation')
             })
+            print(f'coordinate ostacolo {i}: {node.getField('translation').getSFVec3f()}') #DEBUG
             i += 1
         self.num_obst = i-1
         #print(f'Numero ostacoli trovati: {self.num_obst}') DEBUG
@@ -288,9 +295,7 @@ class CustomCarEnv:
         self.prev_distance = current_distance
 
         # === Reward per vicinanza precisa al target (entro 1m) ===
-        proximity_reward = 0.0
-        if current_distance < 1.0:
-            proximity_reward = 1.0 - current_distance
+        proximity_reward = np.exp(-current_distance)
 
         # === Penalità collisione netta ===
         normalized_th = self.collision_th / self.lidar_front.getMaxRange()
@@ -453,117 +458,67 @@ class CustomCarEnv:
 
         return self._get_obs()
 
-    def resample_path(self, points, resolution=1.0):
-        resampled = []
-        for i in range(len(points) - 1):
-            p0 = np.array(points[i])
-            p1 = np.array(points[i+1])
-            segment_vec = p1 - p0
-            segment_len = np.linalg.norm(segment_vec)
-            n_steps = max(int(segment_len / resolution), 1)
+    def assign_objects_and_target(self, min_distance=3.0, num_obj=7):
+        # Definizione dei rettilinei: start, end, coordinata costante, asse costante
+        straight_sections = [
+            {'start': 0, 'end': 120, 'const': 0, 'axis': 'y'},      # rettilineo 1
+            {'start': 180, 'end': 260, 'const': -20, 'axis': 'y'}, # rettilineo 2
+            {'start': 320, 'end': 400, 'const': 0, 'axis': 'y'},  # rettilineo 3
+            {'start': 460, 'end': 520, 'const': 20, 'axis': 'y'}    # rettilineo 4
+        ]
 
-            for j in range(n_steps):
-                t = j / n_steps
-                interp_point = (1 - t) * p0 + t * p1
-                resampled.append(tuple(interp_point))
-        resampled.append(points[-1])  # include last point
-        return resampled
+        if len(self.random_objects) < num_obj:
+            print(f"Errore: servono almeno {num_obj} oggetti random per posizionare {num_obj} ostacoli.")
+            return
 
-    def place_objects_randomly(self):
-        #=====Ottieni waypoints 2D (x,y)=====
-        road_node = self.robot.getFromDef('road')
-        waypoints_field = road_node.getField('wayPoints')
-        n_points = waypoints_field.getCount()
-        points = []
-        for i in range(n_points):
-            wp = waypoints_field.getMFVec3f(i)
-            points.append((wp[0], wp[1]))
-        
-        resampled_points = self.resample_path(points, 0.25)  # 0.25 m di risoluzione
+        # Prendi ostacoli casuali
+        random.shuffle(self.random_objects)
+        selected_obstacles = self.random_objects[:num_obj]
 
-        # Interpolazione spline per traiettoria continua
-        points = np.array(resampled_points)
-        distances = np.cumsum(np.linalg.norm(np.diff(points, axis=0), axis=1))
-        distances = np.insert(distances, 0, 0)
-        
-        cs_x = CubicSpline(distances, points[:, 0])
-        cs_y = CubicSpline(distances, points[:, 1])
-        path_length = distances[-1]
+        # Aggiungi il target
+        all_objects = selected_obstacles + [self.target]
+        random.shuffle(all_objects)  # mescolali per distribuirli in modo casuale
 
-        placed_positions = []  # Lista posizioni (x,y) di target e ostacoli
-        
-        def sample_position(min_dist_from_car=15.0, min_dist_between=10.0):
-            max_attempts = 2000
-            for _ in range(max_attempts):
-                s = np.random.uniform(0, path_length)
-                center_x = cs_x(s)
-                center_y = cs_y(s)
+        for i, section in enumerate(straight_sections):
+            # Prendi due oggetti per questo rettilineo
+            section_objects = all_objects[i*2 : (i+1)*2]
+            placed_coords = []
 
-                dx = cs_x(s, 1)
-                dy = cs_y(s, 1)
-                tangent = np.array([dx, dy])
-                tangent /= np.linalg.norm(tangent)
+            for obj in section_objects:
+                node = obj['node']
+                translation_field = obj['translation']
+                rotation_field = obj['rotation']
 
-                normal = np.array([-tangent[1], tangent[0]])
+                # Trova una coordinata che non sia troppo vicina alle altre
+                attempts = 0
+                while True:
+                    coord = random.uniform(section['start'], section['end'])
+                    const_offset = random.uniform((-self.road_width / 2)-0.25, (self.road_width / 2)-0.25)
 
-                lateral_offset = np.random.uniform(-self.road_width/2 + 0.5, self.road_width/2 - 0.5)
-                pos = np.array([center_x, center_y]) + lateral_offset * normal
+                    if all(abs(coord - other) >= min_distance for other in placed_coords):
+                        placed_coords.append(coord)
+                        break
 
-                car_pos = np.array(self.gps.getValues()[:2]) if self.gps else np.array([0,0])
-                dist_from_car = np.linalg.norm(pos - car_pos)
-                if dist_from_car < min_dist_from_car:
-                    continue
+                    attempts += 1
+                    if attempts > 100:
+                        print(f"Impossibile posizionare {node.getDef()} nel rettilineo {i+1}")
+                        break
 
-                if any(np.linalg.norm(pos - p) < min_dist_between for p in placed_positions):
-                    continue
+                # Costruisci la nuova posizione
+                if section['axis'] == 'x':
+                    pos = [section['const'] + const_offset, coord, 0.4]
+                else:
+                    pos = [coord, section['const'] + const_offset, 0.4]
 
-                return pos
-            raise RuntimeError("Non sono riuscito a piazzare un oggetto rispettando le distanze minime")
+                # Assegna posizione e rotazione
+                translation_field.setSFVec3f(pos)
+                rotation_field.setSFRotation([0, 0, -1, 0])
 
-        # Prendi posizione macchina aggiornata
-        '''DEBUG
-        car_pos = np.array(self.gps.getValues()[:2]) if self.gps else np.array([0, 0])
-        print("=== DEBUG POSIZIONI E DISTANZE ===")
-        print(f"Posizione macchina aggiornata: ({car_pos[0]:.3f}, {car_pos[1]:.3f})")
-        print("----------------------------------")
-        '''
-
-        # Posiziona target
-        target_pos = sample_position(min_dist_from_car=15.0, min_dist_between=10.0)
-        self.target_translation.setSFVec3f([target_pos[0], target_pos[1], self.target_translation.getSFVec3f()[2]])
-        placed_positions.append(target_pos)
-
-        '''DEBUG
-        dist_target_car = np.linalg.norm(target_pos - car_pos)
-        print(f"Target posizionato in: ({target_pos[0]:.3f}, {target_pos[1]:.3f})")
-        print(f"Distanza target -> macchina: {dist_target_car:.3f} m")
-        print("----------------------------------")
-        '''
-
-        # Posiziona ostacoli
-        for i, obj in enumerate(self.random_objects):
-            obst_pos = sample_position(min_dist_from_car=15.0, min_dist_between=10.0)
-            obj['translation'].setSFVec3f([obst_pos[0], obst_pos[1], obj['translation'].getSFVec3f()[2]])
-            placed_positions.append(obst_pos)
-
-            ''' DEBUG
-            dist_obst_car = np.linalg.norm(obst_pos - car_pos)
-            print(f"Ostacolo {i} posizionato in: ({obst_pos[0]:.3f}, {obst_pos[1]:.3f})")
-            print(f"Distanza ostacolo {i} -> macchina: {dist_obst_car:.3f} m")
-
-            # Distanze ostacolo i verso tutti gli altri (compreso target e ostacoli precedenti)
-            print(f"Distanze ostacolo {i} -> altri oggetti:")
-            for j, p in enumerate(placed_positions[:-1]):  # tutti meno l'ultimo aggiunto (ostacolo i)
-                dist = np.linalg.norm(obst_pos - p)
-                tipo = "Target" if j == 0 else f"Ostacolo {j-1}"
-                print(f"  - a {tipo} ({p[0]:.3f}, {p[1]:.3f}): {dist:.3f} m")
-            print("----------------------------------")
-            '''
-
+                print(f"{node.getDef()} posizionato in {pos} (rettilineo {i+1}), rotazione settata")
 
     def udr(self):
         #=====Posizione iniziale random della macchina=====
-        rand_x = np.random.uniform(0, 5)
+        rand_x = self.default_car_pos[0] + np.random.uniform(-3, 5)
         rand_y = np.random.uniform(self.spawn_range_y[0] + 1, self.spawn_range_y[1] - 1)  # leggermente dentro i bordi strada
         self.translation_field.setSFVec3f([rand_x, rand_y, 0.7])
 
@@ -572,7 +527,7 @@ class CustomCarEnv:
         self.rotation_field.setSFRotation([0, 0, 1, angle])  # ruota intorno a z
 
         #=====Posizioniamo oggetti e target nel mondo=====
-        self.place_objects_randomly()
+        self.assign_objects_and_target(3, self.num_obst+1)
 
 
 

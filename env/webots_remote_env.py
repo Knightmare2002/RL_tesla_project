@@ -38,7 +38,7 @@ class WebotsRemoteEnv(gym.Env):
             dtype=np.float32
         )
 
-    def normalize_obs(self, obs):
+    '''def normalize_obs(self, obs):
         obs = np.copy(obs)
 
         # Velocità ruote
@@ -57,7 +57,8 @@ class WebotsRemoteEnv(gym.Env):
         obs[29:32] = obs[29:32] / np.pi
 
         return np.clip(obs, -1.0, 1.0)
-
+        '''
+    
     def step(self, action):
         msg = json.dumps({'cmd': 'step', 'action': action.tolist()}).encode()
         self.conn.send(msg)
@@ -66,16 +67,14 @@ class WebotsRemoteEnv(gym.Env):
         obs = np.array(data['obs'], dtype=np.float32)
         reward = data['reward']
         done = data['done']
-        norm_obs = self.normalize_obs(obs)
-        return norm_obs, reward, done, False, {}
+        return obs, reward, done, False, {}
 
     def reset(self, seed=None, options=None):
         self.conn.send(json.dumps({'cmd': 'reset'}).encode())
         response = self.conn.recv(1024)
         data = json.loads(response.decode())
         obs = np.array(data['obs'], dtype=np.float32)
-        norm_obs = self.normalize_obs(obs)
-        return norm_obs, {}
+        return obs, {}
 
     def close(self):
         self.conn.send(json.dumps({'cmd': 'exit'}).encode())
