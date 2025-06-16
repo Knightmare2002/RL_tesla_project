@@ -19,8 +19,8 @@ wandb.init(
 env = WebotsRemoteEnv()
 
 # Percorsi per salvataggio
-CHECKPOINT_DIR = "C:\\Users\\samue\\OneDrive\\Desktop\\MLDL\\RL_tesla_project\\checkpoint_dir"
-MODEL_DIR = "C:\\Users\\samue\\OneDrive\\Desktop\\MLDL\\RL_tesla_project\\model_dir"
+CHECKPOINT_DIR = ""
+MODEL_DIR = ""
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 os.makedirs(MODEL_DIR, exist_ok=True)
 
