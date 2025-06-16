@@ -1,0 +1,7 @@
+{"time":"2025-06-16T22:11:50.8265894+02:00","level":"INFO","msg":"stream: starting","core version":"0.19.9","symlink path":"C:\\Users\\samue\\OneDrive\\Desktop\\MLDL\\RL_tesla_project\\wandb\\run-20250616_221150-glftq4c8\\logs\\debug-core.log"}
+{"time":"2025-06-16T22:11:51.1824565+02:00","level":"INFO","msg":"created new stream","id":"glftq4c8"}
+{"time":"2025-06-16T22:11:51.183011+02:00","level":"INFO","msg":"stream: started","id":"glftq4c8"}
+{"time":"2025-06-16T22:11:51.183011+02:00","level":"INFO","msg":"handler: started","stream_id":"glftq4c8"}
+{"time":"2025-06-16T22:11:51.1843404+02:00","level":"INFO","msg":"writer: Do: started","stream_id":"glftq4c8"}
+{"time":"2025-06-16T22:11:51.1843404+02:00","level":"INFO","msg":"sender: started","stream_id":"glftq4c8"}
+{"time":"2025-06-16T22:11:51.4501793+02:00","level":"INFO","msg":"Starting system monitor"}

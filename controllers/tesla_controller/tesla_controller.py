@@ -42,12 +42,12 @@ class CustomCarEnv:
         self.collision_th = 0.5
         #==========================
 
-        self.max_timesteps = 5000 #settato a 1000 per 100m di percorso
+        self.max_timesteps = 2000 #settato a 1000 per 100m di percorso
         self.curr_timestep = 0
         self.curr_episode = 0
 
         #=====Road settings=====
-        self.road_length = 520
+        self.road_length = 260
         self.road_width = 8
 
         #=====Supervisor: ottieni riferimento al nodo Tesla======
@@ -108,7 +108,7 @@ class CustomCarEnv:
 
         #=====Oggetti da randomizzare (ostacoli, barili ecc.)=====
         self.spawn_range_x = (0, self.road_length)
-        self.spawn_range_y = (-self.road_width/2, self.road_width/2)
+        self.spawn_range_y = (-self.road_width/4, self.road_width/4)
 
         self.random_objects = []
         i=0
@@ -458,13 +458,11 @@ class CustomCarEnv:
 
         return self._get_obs()
 
-    def assign_objects_and_target(self, min_distance=3.0, num_obj=7):
+    def assign_objects_and_target(self, min_distance=3.0, num_obj=6):
         # Definizione dei rettilinei: start, end, coordinata costante, asse costante
         straight_sections = [
             {'start': 15, 'end': 120, 'const': 0, 'axis': 'y'},      # rettilineo 1
-            {'start': 180, 'end': 260, 'const': -20, 'axis': 'y'}, # rettilineo 2
-            {'start': 320, 'end': 400, 'const': 0, 'axis': 'y'},  # rettilineo 3
-            {'start': 460, 'end': 520, 'const': 20, 'axis': 'y'}    # rettilineo 4
+            {'start': 180, 'end': 260, 'const': -20, 'axis': 'y'}
         ]
 
         if len(self.random_objects) < num_obj:
@@ -480,8 +478,8 @@ class CustomCarEnv:
         random.shuffle(all_objects)  # mescolali per distribuirli in modo casuale
 
         for i, section in enumerate(straight_sections):
-            # Prendi due oggetti per questo rettilineo
-            section_objects = all_objects[i*2 : (i+1)*2]
+            # Prendi tree oggetti per questo rettilineo
+            section_objects = all_objects[i*3 : (i+1)*3]
             placed_coords = []
 
             for obj in section_objects:
@@ -519,7 +517,7 @@ class CustomCarEnv:
     def udr(self):
         #=====Posizione iniziale random della macchina=====
         rand_x = self.default_car_pos[0] + np.random.uniform(-3, 5)
-        rand_y = np.random.uniform(self.spawn_range_y[0] + 1.5, self.spawn_range_y[1] - 1.5)  # leggermente dentro i bordi strada
+        rand_y = np.random.uniform(self.spawn_range_y[0], self.spawn_range_y[1])  # leggermente dentro i bordi strada
         self.translation_field.setSFVec3f([rand_x, rand_y, 0.4])
 
         #=====Rotazione iniziale random della macchina=====
@@ -527,7 +525,7 @@ class CustomCarEnv:
         self.rotation_field.setSFRotation([0, 0, 1, angle])  # ruota intorno a z
 
         #=====Posizioniamo oggetti e target nel mondo=====
-        self.assign_objects_and_target(3, self.num_obst+1)
+        self.assign_objects_and_target(5, self.num_obst+1)
 
 
 
