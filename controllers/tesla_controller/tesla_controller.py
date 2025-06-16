@@ -281,12 +281,15 @@ class CustomCarEnv:
         lidar_rear_samples = obs[19:29]
 
         # === Distanza attuale dal target ===
+        target_coords = self.target['translation'].getSFVec3f()
+
         current_distance = np.linalg.norm(np.array([
-            self.target_pos[0] - (pos[0] * self.road_length), #Denormalization
-            self.target_pos[1]- (pos[1] * self.road_width),
-            self.target_pos[2] - (pos[2] * 1.0)
+            target_coords[0] - (pos[0] * self.road_length),  # Denormalization
+            target_coords[1] - (pos[1] * self.road_width),
+            target_coords[2] - (pos[2] * 1.0)
         ]))
         prev_distance = getattr(self, 'prev_distance', None)
+
 
         # === Reward per progresso verso il target ===
         progress_reward = 0.0
@@ -333,7 +336,7 @@ class CustomCarEnv:
         reverse_bonus = 0.1 if avg_speed < 0 else 0.0
 
         # === Penalità tempo (episodi lunghi) ===
-        time_penalty = -0.0005 * self.curr_timestep
+        time_penalty = -0.0005 * max(0, self.curr_timestep - 200)
 
         # === Bonus finale raggiungimento target ===
         target_bonus = 10.0 if current_distance < self.distance_target_threshold else 0.0
@@ -354,7 +357,7 @@ class CustomCarEnv:
             + time_penalty
         )
 
-        return np.clip(reward, -5.0, 5.0)
+        return np.clip(reward, -10.0, 10.0)
 
     def _check_done(self, obs):
        
@@ -383,9 +386,13 @@ class CustomCarEnv:
         tesla_x = obs[2] * self.road_length #Denormalization
         tesla_y = obs[3] * self.road_width
         tesla_z = obs[4] * 1.0
-        target_distance = np.sqrt((self.target_pos[0] - tesla_x)**2 +\
-                                  (self.target_pos[1] - tesla_y)**2 +\
-                                    (self.target_pos[2] - tesla_z)**2  )
+        target_coords = self.target['translation'].getSFVec3f()
+
+        target_distance = np.sqrt(
+            (target_coords[0] - tesla_x)**2 +
+            (target_coords[1] - tesla_y)**2 +
+            (target_coords[2] - tesla_z)**2
+)
         if target_distance < self.distance_target_threshold and cause is None:
             cause = 'target_reached'
 
@@ -503,10 +510,13 @@ class CustomCarEnv:
                         break
 
                 # Costruisci la nuova posizione
+                z_value = 0.03 if obj == self.target else 0.4
+
                 if section['axis'] == 'x':
-                    pos = [section['const'] + const_offset, coord, 0.4]
+                    pos = [section['const'] + const_offset, coord, z_value]
                 else:
-                    pos = [coord, section['const'] + const_offset, 0.4]
+                    pos = [coord, section['const'] + const_offset, z_value]
+
 
                 # Assegna posizione e rotazione
                 translation_field.setSFVec3f(pos)
@@ -526,6 +536,7 @@ class CustomCarEnv:
 
         #=====Posizioniamo oggetti e target nel mondo=====
         self.assign_objects_and_target(5, self.num_obst+1)
+        print(f'nuove coordinate target: {self.target['translation'].getSFVec3f()}')
 
 
 

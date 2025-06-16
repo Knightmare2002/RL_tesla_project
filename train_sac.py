@@ -38,17 +38,17 @@ wandb_callback = WandbCallback(
     verbose=2,
 )
 
-latest_checkpoint_path = os.path.join(CHECKPOINT_DIR, "sac_model_100000_steps.zip")
+#latest_checkpoint_path = os.path.join(CHECKPOINT_DIR, "sac_model_100000_steps.zip")
 
 
 try:
-    #model = SAC(MlpPolicy, env, verbose=1, device='cuda', tensorboard_log="./tb_logs/")
-    model = SAC.load(latest_checkpoint_path, env=env, device='cuda', tensorboard_log="./tb_logs/")
+    model = SAC(MlpPolicy, env, verbose=1, device='cuda', tensorboard_log="./tb_logs/")
+    #model = SAC.load(latest_checkpoint_path, env=env, device='cuda', tensorboard_log="./tb_logs/")
     print(f'Using device: {model.device}')
 
-    '''
+    
     model.learn(
-        total_timesteps=1_000_000,
+        total_timesteps=2_000_000,
         progress_bar=True,
         callback=[checkpoint_callback, wandb_callback]
     )
@@ -59,6 +59,7 @@ try:
         reset_num_timesteps=False, 
         callback=[checkpoint_callback, wandb_callback]
     )
+    '''
 
     # Salva modello finale
     model.save(os.path.join(MODEL_DIR, "webots_sac_final"))
