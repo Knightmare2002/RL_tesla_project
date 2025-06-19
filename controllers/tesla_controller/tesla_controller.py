@@ -257,104 +257,113 @@ class CustomCarEnv:
         return obs_space
 
     def _compute_reward(self, obs):
-        # === Parse observation ===
-        left_v = obs[0]
-        right_v = obs[1]
-        pos_denormalized = obs[2:5]
-        roll, pitch, yaw = obs[5], obs[6], obs[7]
-        lidar_front_samples = obs[8:18]
-        lidar_rear_samples = obs[18:28]
-
-        # === Distanza attuale dal target ===
-        target_coords = self.target['translation'].getSFVec3f()
+        reward = 0.0
         
-        # Denormalizzazione delle posizioni per il calcolo della distanza
-        current_car_x = pos_denormalized[0] * self.road_length
-        current_car_y = pos_denormalized[1] * (self.road_width / 2) # Ricorda la normalizzazione per metà larghezza
-        current_car_z = pos_denormalized[2] * 1.0 # Altezza
+        # Inizializza i componenti della reward per il debug
+        reward_components = {
+            'progress_reward': 0.0,
+            'target_reached_reward': 0.0,
+            'collision_penalty': 0.0,
+            'falling_penalty': 0.0,
+            'blocked_penalty': 0.0,
+            'speed_reward': 0.0,
+            'off_road_penalty': 0.0,
+            'time_penalty': 0.0
+        }
 
-        current_distance = np.linalg.norm(np.array([
-            target_coords[0] - current_car_x,
-            target_coords[1] - current_car_y,
-            target_coords[2] - current_car_z
-        ]))
-        prev_distance = getattr(self, 'prev_distance', None)
+        # Extract relevant observations
+        tesla_x = obs[2] * self.road_length
+        tesla_y = obs[3] * (self.road_width / 2)
+        tesla_z = obs[4] * 1.0
 
+        target_coords = self.target['translation'].getSFVec3f()
+        current_distance = np.linalg.norm(np.array([target_coords[0] - tesla_x,
+                                                     target_coords[1] - tesla_y,
+                                                     target_coords[2] - tesla_z]))
 
-        # === Reward per progresso verso il target ===
-        progress_reward = 0.0
-        if prev_distance is not None:
-            progress_reward = prev_distance - current_distance
+        # 1. Progress Reward
+        if self.prev_distance is not None:
+            distance_reduction = self.prev_distance - current_distance
+            reward_components['progress_reward'] = distance_reduction * 2.0
         self.prev_distance = current_distance
 
-        # === Reward per vicinanza precisa al target (entro 1m) ===
-        proximity_reward = np.exp(-current_distance)
+        # 2. Target Reached Reward
+        if current_distance < self.distance_target_threshold:
+            reward_components['target_reached_reward'] = 100.0
 
-        # === Penalità collisione netta ===
+        # 3. Collision Penalty
+        front_lidar_dist = obs[8:18]
+        rear_lidar_dist = obs[18:28]
         normalized_th_front = self.collision_th / self.lidar_front.getMaxRange()
-        # Modifica Cruciale: Aumento dei coefficienti delle penalità per collisione/ribaltamento
-        front_collision_penalty = -1.0 if np.any(lidar_front_samples < normalized_th_front) else 0.0
+        normalized_th_rear = self.collision_th / self.lidar_rear.getMaxRange()
+        
+        avg_speed = 0.5 * ((90 * obs[0] + 40) + (90 * obs[1] + 40)) 
+        
+        collision = (np.any(front_lidar_dist < normalized_th_front) and avg_speed > 0.1) or \
+                    (np.any(rear_lidar_dist < normalized_th_rear) and avg_speed < -0.1)
+        
+        if collision:
+            reward_components['collision_penalty'] = -50.0
 
-        normalized_th_rear = self.collision_th/self.lidar_rear.getMaxRange()
-        rear_collision_penalty = -1.0 if np.any(lidar_rear_samples < normalized_th_rear) else 0.0
+        # 4. Falling Penalty
+        roll, pitch = obs[5], obs[6]
+        max_angle_for_fall = 0.2
+        falling = abs(roll * np.pi) > max_angle_for_fall or abs(pitch * np.pi) > max_angle_for_fall
+        if falling:
+            reward_components['falling_penalty'] = -75.0
 
+        # 5. Blocked Penalty
+        if self.block_counter > 0:
+            reward_components['blocked_penalty'] = -0.5
 
-        # === Penalità ribaltamento ===
-        max_angle_for_fall = 0.2 # 0.2 radianti, circa 11.4 gradi
-        fall_penalty = -1.0 if abs(roll * np.pi) > max_angle_for_fall or abs(pitch * np.pi) > max_angle_for_fall else 0.0
+        # 6. Speed Reward
+        ideal_speed_min = 20.0
+        ideal_speed_max = 60.0
 
+        if avg_speed >= ideal_speed_min and avg_speed <= ideal_speed_max:
+            reward_components['speed_reward'] = 0.1 * (avg_speed / ideal_speed_max)
+        elif avg_speed > ideal_speed_max:
+            reward_components['speed_reward'] = -0.05 * (avg_speed - ideal_speed_max)
+        elif avg_speed < ideal_speed_min and avg_speed > 1.0:
+            reward_components['speed_reward'] = 0.05 * (avg_speed / ideal_speed_min)
+        else:
+            reward_components['speed_reward'] = -0.2
 
-        # === Penalità sterzata brusca (penalizza angoli sterzata grandi, ma non troppo) ===
-        steer_left = self.front_left_steer.getTargetPosition()
-        steer_right = self.front_right_steer.getTargetPosition()
-        avg_steer = 0.5 * (steer_left + steer_right)
-        steer_penalty = -0.05 * (avg_steer ** 2)  # penalità quadratica più dolce
+        # 7. Off-Road Penalty
+        road_half_width = self.road_width / 2
+        car_on_road = abs(tesla_y) < road_half_width
 
-        # === Penalità per velocità differenziale fra ruote (zig-zag) ===
-        velocity_penalty = -0.1 * abs(left_v - right_v)
+        if not car_on_road:
+            reward_components['off_road_penalty'] = -1.0
 
-        #===Penalità vicinanza a ostacoli frontali (media distanza lidar frontale)===
-        front_lidar_penalty = 0.0
-        mean_front_lidar = np.mean(lidar_front_samples)
-        if mean_front_lidar < normalized_th_front * 3: # 3 volte la soglia di collisione
-            front_lidar_penalty = -0.5 * (normalized_th_front * 3 - mean_front_lidar) / (normalized_th_front * 3)
+        # 8. Time Penalty
+        reward_components['time_penalty'] = -0.01
 
-        #===Penalità vicinanza a ostacoli posteriori (media distanza lidar frontale)===
-        rear_lidar_penalty = 0.0
-        mean_rear_lidar = np.mean(lidar_rear_samples)
-        if mean_rear_lidar < normalized_th_rear * 3:
-            rear_lidar_penalty = -0.5 * (normalized_th_rear * 3 - mean_rear_lidar) / (normalized_th_rear * 3)
+        # Calcola la reward totale prima del clipping
+        raw_reward = sum(reward_components.values())
 
-        # === Penalità tempo (episodi lunghi) ===
-        time_penalty = -0.0005 * max(0, self.curr_timestep - 1500)
+        # Applica il clipping alla reward finale
+        reward = np.clip(raw_reward, -10.0, 10.0)
 
-        # === Bonus finale raggiungimento target ===
-        target_bonus = 10.0 if current_distance < self.distance_target_threshold else 0.0
+        # ====== Stampa di Debug ======
+        # Stampa solo ogni N timesteps per non intasare la console
+        print_interval = 10 # Stampa ogni 10 timesteps, puoi cambiarlo
+        if self.curr_timestep % print_interval == 0:
+            print(f"\n--- Timestep {self.curr_timestep} ---")
+            for name, value in reward_components.items():
+                print(f"  {name.replace('_', ' ').capitalize()}: {value:.4f}")
+            print(f"  Raw Total Reward: {raw_reward:.4f}")
+            print(f"  Clipped Total Reward: {reward:.4f}")
+            print(f"  Current Distance to Target: {current_distance:.2f}m")
+            print(f"  Average Speed: {avg_speed:.2f} m/s")
+            print(f"  Collision (Lidar): {collision}")
+            print(f"  Falling: {falling}")
+            print(f"  Blocked Counter: {self.block_counter}")
+            print(f"--------------------------")
+        # ============================
 
-        #=== Bonus per andare avanti ===
-        avg_current_speed = 0.5 * (self.left_motor.getVelocity() + self.right_motor.getVelocity())
-        forward_motion_bonus = 0.0
-        if avg_current_speed > 0.1: # Piccolo bonus per muoversi in avanti
-            forward_motion_bonus = 0.01 * avg_current_speed # Piccolo coefficiente
-
-        # === Reward totale ===
-        reward = (
-            5.0 * progress_reward
-            + 5.0 * proximity_reward
-            + front_collision_penalty * 500.0 # AUMENTATO! Prima era 5.0
-            + rear_collision_penalty * 500.0  # AUMENTATO! Prima era 5.0
-            + fall_penalty * 500.0            # AUMENTATO! Prima era 5.0
-            + steer_penalty
-            + velocity_penalty
-            + front_lidar_penalty * 25.0     
-            + rear_lidar_penalty * 15.0      
-            + target_bonus * 250.0           
-            + time_penalty
-            +forward_motion_bonus * 5.0
-        )
-
-        return np.clip(reward, -750.0, 500.0) # Estensione del clipping per ricompense più grandi per accomodare le nuove penalità
-
+        return reward
+    
     def _check_done(self, obs):
 
         cause = None
