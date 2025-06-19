@@ -30,8 +30,8 @@ class WebotsRemoteEnv(gym.Env):
         '''
 
         self.action_space = spaces.Box(
-            low=np.array([-50.0, -1.0]),   # aggiunta sterzata (circa -30°)
-            high=np.array([130.0, 1.0]),   # circa +60°
+            low=np.array([-50.0, -0.7]),   # aggiunta sterzata (circa -30°)
+            high=np.array([130.0, 0.7]),   # circa +60°
             dtype=np.float32
         )
 

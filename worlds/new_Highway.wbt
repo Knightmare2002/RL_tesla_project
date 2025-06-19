@@ -11,8 +11,8 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 WorldInfo {
 }
 Viewpoint {
-  orientation -0.16149134864693032 -0.48749508910764444 0.8580612346494424 5.546330288896339
-  position -85.60985167186713 97.9298155924398 64.0552222261475
+  orientation -0.14904739544400913 -0.5480969673047139 0.8230276959754954 5.644970656044901
+  position -95.91937061608029 87.00799826475556 63.70772059202017
 }
 Background {
   skyColor [
@@ -89,7 +89,7 @@ DEF ostacolo_4 OilBarrel {
   rotation 0 0 -1 0
 }
 Road {
-  width 8
+  width 12
   roadBorderHeight 0.25
   bottom TRUE
   wayPoints [

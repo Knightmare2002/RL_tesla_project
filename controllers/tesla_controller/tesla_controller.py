@@ -319,6 +319,7 @@ class CustomCarEnv:
         if mean_front_lidar < normalized_th_front * 3: # 3 volte la soglia di collisione
             front_lidar_penalty = -0.5 * (normalized_th_front * 3 - mean_front_lidar) / (normalized_th_front * 3)
 
+        #===Penalità vicinanza a ostacoli posteriori (media distanza lidar frontale)===
         rear_lidar_penalty = 0.0
         mean_rear_lidar = np.mean(lidar_rear_samples)
         if mean_rear_lidar < normalized_th_rear * 3:
@@ -330,6 +331,12 @@ class CustomCarEnv:
         # === Bonus finale raggiungimento target ===
         target_bonus = 10.0 if current_distance < self.distance_target_threshold else 0.0
 
+        #=== Bonus per andare avanti ===
+        avg_current_speed = 0.5 * (self.left_motor.getVelocity() + self.right_motor.getVelocity())
+        forward_motion_bonus = 0.0
+        if avg_current_speed > 0.1: # Piccolo bonus per muoversi in avanti
+            forward_motion_bonus = 0.01 * avg_current_speed # Piccolo coefficiente
+
         # === Reward totale ===
         reward = (
             5.0 * progress_reward
@@ -340,9 +347,10 @@ class CustomCarEnv:
             + steer_penalty
             + velocity_penalty
             + front_lidar_penalty * 25.0     
-            + rear_lidar_penalty * 25.0      
+            + rear_lidar_penalty * 15.0      
             + target_bonus * 250.0           
             + time_penalty
+            +forward_motion_bonus * 5.0
         )
 
         return np.clip(reward, -750.0, 500.0) # Estensione del clipping per ricompense più grandi per accomodare le nuove penalità
@@ -575,7 +583,7 @@ class CustomCarEnv:
         self.translation_field.setSFVec3f([rand_x_start, rand_y_start, 0.4])
 
         #=====Rotazione iniziale random della macchina=====
-        angle = np.random.uniform(-0.4, 0.4)
+        angle = np.random.uniform(-0.7, 0.7)
         self.rotation_field.setSFRotation([0, 0, 1, angle])   
 
         #=====Posizioniamo oggetti e target nel mondo in base alla fase del curriculum=====
