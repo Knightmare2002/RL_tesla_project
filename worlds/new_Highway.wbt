@@ -1,0 +1,109 @@
+#VRML_SIM R2025a utf8
+
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/vehicles/protos/tesla/TeslaModel3.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/vehicles/protos/toyota/ToyotaPriusSimple.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/vehicles/protos/range_rover/RangeRoverSportSVRSimple.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/vehicles/protos/lincoln/LincolnMKZSimple.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/vehicles/protos/bmw/BmwX5Simple.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/obstacles/protos/OilBarrel.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/road/protos/Road.proto"
+
+WorldInfo {
+}
+Viewpoint {
+  orientation -0.16347941975687663 -0.146567287693203 0.9755985391000813 4.578898077057074
+  position 17.583281776232944 33.21744488274227 11.312370208779837
+}
+Background {
+  skyColor [
+    0.4 0.7 1
+  ]
+}
+DEF target Solid {
+  translation 20.002 0.2498 0.03
+  rotation 0 0 -1 0
+  children [
+    Shape {
+      appearance PBRAppearance {
+        baseColor 1 0 0
+        metalness 0
+      }
+      geometry Plane {
+        size 2 2
+      }
+    }
+  ]
+}
+DEF tesla3 TeslaModel3 {
+  translation 7.18706 -0.10925 0.212155
+  rotation 0.01259070380354838 -0.41612712570859267 -0.9092192746676877 0.0308822
+  controller "tesla_controller"
+  supervisor TRUE
+  sensorsSlotFront [
+    DEF lidar_front Lidar {
+      name "lidar_front"
+      fieldOfView 0.785
+      maxRange 15
+    }
+  ]
+  sensorsSlotRear [
+    DEF lidar_rear Lidar {
+      name "lidar_rear"
+      fieldOfView 1.57
+      maxRange 3
+    }
+  ]
+  sensorsSlotTop [
+    GPS {
+    }
+  ]
+  sensorsSlotCenter [
+    InertialUnit {
+    }
+  ]
+}
+DEF ostacolo_0 ToyotaPriusSimple {
+  translation 99.357 15.3735 0.4
+  rotation 0 0 -1 0
+  name "vehicle(1)"
+}
+DEF ostacolo_1 RangeRoverSportSVRSimple {
+  translation 85.1064 -13.4847 0.4
+  rotation 0 0 -1 0
+  name "vehicle(2)"
+}
+DEF ostacolo_2 LincolnMKZSimple {
+  translation 84.9036 16.5975 0.4
+  rotation 0 0 -1 0
+  name "vehicle(3)"
+}
+DEF ostacolo_3 BmwX5Simple {
+  translation 97.319 -14.0566 0.4
+  rotation 0 0 -1 0
+  name "vehicle(4)"
+}
+DEF ostacolo_4 OilBarrel {
+  translation 117.27 17.6344 0.4
+  rotation 0 0 -1 0
+}
+Road {
+  width 8
+  roadBorderHeight 0.25
+  bottom TRUE
+  wayPoints [
+    0 0 0
+    120 0 0
+    130 -5 0
+    140 -10 0
+    150 -15 0
+    160 -20 0
+    180 -20 0
+    200 -20 0
+    220 -20 0
+    220 -20 0
+    240 -20 0
+    260 -20 0
+  ]
+  splineSubdivision 400
+  roadBoundingObject TRUE
+}
