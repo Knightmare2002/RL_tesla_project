@@ -334,18 +334,18 @@ class CustomCarEnv:
         reward = (
             5.0 * progress_reward
             + 5.0 * proximity_reward
-            + front_collision_penalty * 750.0 # AUMENTATO! Prima era 5.0
-            + rear_collision_penalty * 750.0  # AUMENTATO! Prima era 5.0
-            + fall_penalty * 750.0            # AUMENTATO! Prima era 5.0
+            + front_collision_penalty * 500.0 # AUMENTATO! Prima era 5.0
+            + rear_collision_penalty * 500.0  # AUMENTATO! Prima era 5.0
+            + fall_penalty * 500.0            # AUMENTATO! Prima era 5.0
             + steer_penalty
             + velocity_penalty
-            + front_lidar_penalty * 50.0     
-            + rear_lidar_penalty * 50.0      
-            + target_bonus * 500.0           
+            + front_lidar_penalty * 25.0     
+            + rear_lidar_penalty * 25.0      
+            + target_bonus * 250.0           
             + time_penalty
         )
 
-        return np.clip(reward, -1000.0, 1000.0) # Estensione del clipping per ricompense più grandi per accomodare le nuove penalità
+        return np.clip(reward, -750.0, 500.0) # Estensione del clipping per ricompense più grandi per accomodare le nuove penalità
 
     def _check_done(self, obs):
 

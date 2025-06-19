@@ -11,8 +11,8 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 WorldInfo {
 }
 Viewpoint {
-  orientation -0.16347941975687663 -0.146567287693203 0.9755985391000813 4.578898077057074
-  position 17.583281776232944 33.21744488274227 11.312370208779837
+  orientation -0.16149134864693032 -0.48749508910764444 0.8580612346494424 5.546330288896339
+  position -85.60985167186713 97.9298155924398 64.0552222261475
 }
 Background {
   skyColor [
@@ -41,8 +41,10 @@ DEF tesla3 TeslaModel3 {
   supervisor TRUE
   sensorsSlotFront [
     DEF lidar_front Lidar {
+      rotation 0 1 0 0
       name "lidar_front"
       fieldOfView 0.785
+      verticalFieldOfView 0.05
       maxRange 15
     }
   ]

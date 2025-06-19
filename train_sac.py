@@ -9,7 +9,7 @@ from webots_remote_env import WebotsRemoteEnv
 
 wandb.init(
     project="RL_tesla_project",          
-    name="SAC-Webots-run2",             
+    name="SAC-Webots-run4",             
     sync_tensorboard=True,             
     monitor_gym=True,                  
     save_code=True
@@ -19,7 +19,7 @@ wandb.init(
 env = WebotsRemoteEnv()
 
 # Percorsi per salvataggio
-CHECKPOINT_DIR = "C:\\Users\\samue\\OneDrive\\Desktop\\MLDL\\RL_tesla_project\\checkpoint_dir"
+CHECKPOINT_DIR = "C:\\Users\\samue\\OneDrive\\Desktop\\MLDL\\RL_tesla_project\\checkpoint_dir\\SacModel4"
 MODEL_DIR = "C:\\Users\\samue\\OneDrive\\Desktop\\MLDL\\RL_tesla_project\\model_dir"
 os.makedirs(CHECKPOINT_DIR, exist_ok=True)
 os.makedirs(MODEL_DIR, exist_ok=True)
@@ -28,7 +28,7 @@ os.makedirs(MODEL_DIR, exist_ok=True)
 checkpoint_callback = CheckpointCallback(
     save_freq=100_000,                     # salva ogni 100k timesteps
     save_path=CHECKPOINT_DIR,
-    name_prefix="sac_model3"
+    name_prefix="sac_model4"
 )
 
 # Callback per integrazione con wandb
