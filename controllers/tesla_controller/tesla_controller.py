@@ -1,20 +1,47 @@
 from controller import Supervisor
 import numpy as np
-import random
 import socket
 import json
+import os
+
 
 class CustomCarEnv:
     robot = Supervisor()
 
+    def _open_debug_file(self):
+        """Apre il file di debug, sovrascrivendolo se esiste già."""
+        try:
+            self.debug_file = open(self.debug_file_path, 'w')
+            self.debug_file.write(f"--- Inizio sessione di debug Webots RL ---\n")
+        except IOError as e:
+            print(f"Errore nell'apertura del file di debug: {e}")
+            self.debug_file = None # Assicura che sia None se c'è un errore
+
+    def _close_debug_file(self):
+        """Chiude il file di debug se è aperto."""
+        if self.debug_file:
+            self.debug_file.write(f"--- Fine sessione di debug ---\n")
+            self.debug_file.close()
+            self.debug_file = None
+
     def __init__(self):
         self.timestep = int(self.robot.getBasicTimeStep())
 
+
+        #===== Gestione Motori====
         self.left_motor = self.robot.getDevice('left_rear_wheel')
         self.right_motor = self.robot.getDevice('right_rear_wheel')
 
         self.front_left_steer = self.robot.getDevice('left_steer')
         self.front_right_steer = self.robot.getDevice('right_steer')
+
+        self.max_speed = 26 #rad/s
+        self.max_back_speed = 0 #rad/s
+
+        self.max_steering = 0.6 #rad
+
+        self.norm_max = 1
+        self.norm_min = 0
 
         if self.front_left_steer is None or self.front_right_steer is None:
             print("ERRORE: Attuatori di sterzo non trovati.")
@@ -22,26 +49,25 @@ class CustomCarEnv:
 
         #=====Gestione lidars=====
         self.lidar_front = self.robot.getDevice('lidar_front')
-        self.lidar_front.enable(self.timestep)
-        self.lidar_front.enablePointCloud() #attiva la nuvola di punti
 
-        self.lidar_rear = self.robot.getDevice('lidar_rear')
-        if self.lidar_rear is not None:
-            self.lidar_rear.enable(self.timestep)
-            self.lidar_rear.enablePointCloud()
+        if self.lidar_front is not None:
+            self.lidar_front.enable(self.timestep)
+            self.lidar_front.enablePointCloud()
         else:
-            print("AVVISO: Lidar posteriore non trovato.")
+            print("AVVISO: Lidar frontale non trovato.")
+        
+        #print(f'Max range lidar: {self.lidar_front.getMaxRange()}') DEBUG
 
-        self.collision_th = 0.5
+        self.collision_th = 1.0
         #==========================
 
-        self.max_timesteps = 5000
+        self.max_timesteps = 2000 # Adjusted for a shorter 100m track
         self.curr_timestep = 0
         self.curr_episode = 0
 
         #=====Road settings=====
-        self.road_length = 260
-        self.road_width = 8
+        self.road_length = 120 # Changed to 100m straight line
+        self.road_width = 12
 
         #=====Supervisor: ottieni riferimento al nodo Tesla======
         self.car_node = self.robot.getFromDef("tesla3")
@@ -64,7 +90,9 @@ class CustomCarEnv:
         self.target_node = self.robot.getFromDef('target')
         self.target_translation = self.target_node.getField('translation')
         self.target_pos = self.target_translation.getSFVec3f()
-        self.distance_target_threshold = 2
+
+        self.distance_target_threshold = 2.5
+
         print(f'Coordinate target iniziali: {self.target_pos}') #DEBUG
 
         self.target = {
@@ -86,63 +114,38 @@ class CustomCarEnv:
             self.imu.enable(self.timestep)
         else:
             print("AVVISO: Inertial Unit non trovata.")
-
-        self.total_reward = 0.0
-        self.reward_print_interval = 50  # ogni 50 step stampa
-        #=========================
-
-        #=====Oggetti da randomizzare (ostacoli, barili ecc.)=====
-        self.spawn_range_x = (0, self.road_length)
-        self.spawn_range_y = (-self.road_width/4, self.road_width/4)
-
-        self.random_objects = []
-        i=0
-
-        while True:
-            node = self.robot.getFromDef(f'ostacolo_{i}')
-            if not node:
-                break
-            self.random_objects.append({
-                    'node': node,
-                    'translation': node.getField('translation'),
-                    'rotation':node.getField('rotation')
-            })
-            i += 1
-        self.num_total_obstacles = i 
-        #print(f'Numero ostacoli trovati: {self.num_total_obstacles}') # DEBUG
+        self.max_angle_roll_pitch_yaw = np.pi
         #========================
+
+        #=====Reward=====
+        self.total_reward = 0.0
+        self.reward_print_interval = 50   # ogni 50 step stampa
+        #=========================
 
         #======Anti-Blockage=====
         self.block_counter = 0
         self.max_block_steps = 50
         self.last_pos = None
-        self.block_movement_threshold = 0.01  # distanza minima per considerare movimento
-        self.min_speed_threshold = 0.05       # velocità media sotto la quale la macchina è considerata quasi ferma
+        self.block_movement_threshold = 0.01   # distanza minima per considerare movimento
+        self.min_speed_threshold = 0.05    # velocità media sotto la quale la macchina è considerata quasi ferma
 
-        self.udr_called = False
+        # --- Setup per il file di debug ---
+        self.debug_file_path = 'debug.txt'
+        self.debug_file = None
+        self._open_debug_file()
+        # ----------------------------------
 
-        # --- Curriculum Learning Parameters ---
-        self.curriculum_stage = 0 # Inizia dalla fase più semplice
-        self.stage_settings = {
-            0: {'target_x_range': (15, 60), 'num_obstacles_to_use': 2, 'reward_threshold_to_advance': 30.0},
-            1: {'target_x_range': (65, 120), 'num_obstacles_to_use': 4, 'reward_threshold_to_advance': 50.0},
-            2: {'target_x_range': (125, 200), 'num_obstacles_to_use': 6, 'reward_threshold_to_advance': 70.0},
-            3: {'target_x_range': (205, self.road_length), 'num_obstacles_to_use': self.num_total_obstacles, 'reward_threshold_to_advance': 90.0}
-        }
-        self.consecutive_successes = 0
-        self.num_successes_to_advance = 5 # Numero di episodi di successo consecutivi per avanzare
-
-        self.reset()
+        self.reset() # Initial reset to set up the environment
 
     def step(self, action):
 
-        avg_speed = action[0] 
+        avg_speed = action[0] * self.max_speed
         self.left_motor.setVelocity(avg_speed)
         self.right_motor.setVelocity(avg_speed)
 
         # Imposta l'angolo di sterzata delle ruote anteriori
-        self.front_left_steer.setPosition(action[1]) 
-        self.front_right_steer.setPosition(action[1])
+        self.front_left_steer.setPosition(action[1] * self.max_steering) 
+        self.front_right_steer.setPosition(action[1] * self.max_steering)
 
         if self.robot.step(self.timestep) == -1:
             print("Simulazione interrotta durante lo step.")
@@ -156,7 +159,6 @@ class CustomCarEnv:
         if self.curr_timestep % self.reward_print_interval == 0:
             print(f"[{self.curr_timestep}] Reward cumulativa episodio {self.curr_episode}: {self.total_reward:.2f}")
 
-
         done, cause = self._check_done(obs)
         self.curr_timestep += 1
 
@@ -164,95 +166,90 @@ class CustomCarEnv:
             print(f"[FINE][{cause}]Episodio {self.curr_episode} terminato con reward cumulativa: {self.total_reward:.2f}\n")
             print("==========================")
             
-            current_stage_threshold = self.stage_settings[self.curriculum_stage]['reward_threshold_to_advance']
-
-            # Verifica se l'episodio è un vero "successo" per il curriculum
-            if cause == 'target_reached' and self.total_reward >= current_stage_threshold:
-                self.consecutive_successes += 1
-                print(f"Successo consecutivo: {self.consecutive_successes}/{self.num_successes_to_advance}")
-                if self.consecutive_successes >= self.num_successes_to_advance and self.curriculum_stage < len(self.stage_settings) - 1:
-                    self.curriculum_stage += 1
-                    self.consecutive_successes = 0 # Resetta per la nuova fase (dopo l'avanzamento)
-                    print(f"*** AVANZAMENTO CURRICULUM: Nuova fase {self.curriculum_stage} ***")
-            else:
-                # Resetta i successi consecutivi SOLO SE l'episodio NON è un successo
-                self.consecutive_successes = 0 
-                # Aggiungi un messaggio per chiarire il reset
-                if cause != 'target_reached':
-                    print(f"Episodio terminato per '{cause}', successi consecutivi resettati.")
-                elif self.total_reward < current_stage_threshold:
-                    print(f"Reward insufficiente ({self.total_reward:.2f} < {current_stage_threshold:.2f}), successi consecutivi resettati.")
-
-
             self.curr_episode += 1
-            self.udr_called = False # Permette una nuova UDR al prossimo reset
-            obs = self.reset() # Il reset avviene qui
+            obs = self.reset() # The reset happens here
             return obs, reward, True, {}
 
         return obs, reward, False, {}
 
     def _get_obs(self):
         #=====Gestione velocità=====
-        left_velocity = np.array([self.left_motor.getVelocity()], dtype=np.float32)
-        left_velocity = (left_velocity - 40.0) / 90.0 #Normalization
+        left_velocity = self.left_motor.getVelocity()
+        right_velocity = self.right_motor.getVelocity()
+        avg_velocity = 0.5 * (left_velocity + right_velocity)
 
-        right_velocity = np.array([self.right_motor.getVelocity()], dtype=np.float32)
-        right_velocity = (right_velocity - 40.0) / 90.0 #Normalization
+        avg_velocity_norm = avg_velocity / self.max_speed
+
+        avg_velocity_norm = np.array([avg_velocity_norm], dtype=np.float32)
 
         #=====Gestione posizione gps=====
         pos = np.array(self.gps.getValues() if self.gps else [0.0, 0.0, 0.0], dtype=np.float32)
-        # Normalizzazione GPS
-        pos[0] /= self.road_length # X-coordinate (lunghezza strada)
-        pos[1] /= (self.road_width / 2) # Y-coordinate (metà larghezza strada per ottenere range [-1, 1])
-        pos[2] /= 1.0 # Z-coordinate (altezza, se rilevante per la normalizzazione)
+        
+        pos_norm = np.copy(pos)
+
+        # Normalizzazione GPS per observation space
+        pos_norm[0] /= self.road_length
+        pos_norm[1] /= self.road_width/2
 
 
         #=====Gestione ribaltamento IMU (Roll, Pitch, Yaw)=====
-        # Normalizzazione degli angoli in radianti
-        # Roll e Pitch vanno da -PI a PI
-        max_angle_roll_pitch = np.pi # Max angolo possibile per normalizzazione a [-1, 1]
-        max_angle_yaw = np.pi # Yaw va da -PI a PI
+        imu = np.array(self.imu.getRollPitchYaw() if self.imu else [0.0, 0.0, 0.0], dtype=np.float32)
+        
 
-        orientation = np.array(self.imu.getRollPitchYaw() if self.imu else [0.0, 0.0, 0.0], dtype=np.float32)
+        # Normalizzazione degli angoli in radianti per observation space
+        #Roll rotazione intorno x
+        #Pitch rotazione intorno z
+        #Yaw rotazione intorno y
 
-        orientation[0] /= max_angle_roll_pitch # Roll
-        orientation[1] /= max_angle_roll_pitch # Pitch
-        orientation[2] /= max_angle_yaw       # Yaw
+        orientation_obs_norm = np.copy(imu)
+        orientation_obs_norm[0] /= self.max_angle_roll_pitch_yaw # Roll
+        orientation_obs_norm[1] /= self.max_angle_roll_pitch_yaw/2 # Pitch
+        orientation_obs_norm[2] /= self.max_angle_roll_pitch_yaw        # Yaw
 
         
         #=====Gestione lidars=====
-        # I valori sono già in range [0, MaxRange]. La normalizzazione è corretta.
         lidar_front_values = np.array(self.lidar_front.getRangeImage(), dtype=np.float32)
+
+        #DEBUG
+        #print(f"DEBUG: Max Lidar Range del sensore (da Webots): {self.lidar_front.getMaxRange()} m")
+        #print(f"DEBUG: Lunghezza Raw Lidar Values: {len(lidar_front_values)}")
+        #print(f"DEBUG: Raw Lidar Values (prima dell'inf handling): {lidar_front_values[:20]} ... {lidar_front_values[-20:]}") # Stampa l'inizio e la fine{lidar_front_samples_norm}')
+
         lidar_front_values[np.isinf(lidar_front_values)] = self.lidar_front.getMaxRange()
+        # DEBUG
+        #print(f"DEBUG: Lidar Values after Inf handling (prima del campionamento): {lidar_front_values[:20]} ... {lidar_front_values[-20:]}")
 
         num_samples = 10
         step = max(1, len(lidar_front_values) // num_samples)
-        lidar_front_samples = lidar_front_values[::step][:num_samples]
-        lidar_front_samples = lidar_front_samples / self.lidar_front.getMaxRange() #normalization
+        lidar_front_samples_obs = lidar_front_values[::step][:num_samples]
+        lidar_front_samples_norm = lidar_front_samples_obs / self.lidar_front.getMaxRange() #normalization
+        
+        #DEBUG
+        #print(f'Obs space lidars distances (sampled): {lidar_front_samples_obs}')
+        #print(f'Obs space lidars distances norm (sampled): {lidar_front_samples_norm}')
 
-        lidar_rear_values = np.array(self.lidar_rear.getRangeImage(), dtype=np.float32)
-        lidar_rear_values[np.isinf(lidar_rear_values)] = self.lidar_rear.getMaxRange()
 
-        lidar_rear_samples = lidar_rear_values[::step][:num_samples]
-        lidar_rear_samples = lidar_rear_samples / self.lidar_rear.getMaxRange() #Normalization
         #==========================================================
 
         #======Gestione posizione del target======
-        target_coords_raw = np.array(self.target['translation'].getSFVec3f(), dtype=np.float32)
-        target_coords_normalized = np.copy(target_coords_raw)
-        target_coords_normalized[0] /= self.road_length 
-        target_coords_normalized[1] /= (self.road_width / 2)
-        target_coords_normalized[2] /= 1.0 
+        target_coords = np.array(self.target['translation'].getSFVec3f(), dtype=np.float32)
+
+        target_coords_norm = np.copy(target_coords)
+
+        target_coords_norm[0] /= self.road_length
+        target_coords_norm[1] /= (self.road_width / 2)
+        target_coords_norm[2] /= 1.0
+
+        #print(f'Posizione target obs: {target_coords}...{target_coords_norm}_norm') #DEBUG
 
         # Concatenazione delle osservazioni
         obs_space = np.concatenate(
             [
-            left_velocity, right_velocity, # 2 valori
-            pos,                            # 3 valori (GPS x, y, z)
-            orientation,                    # 3 valori (IMU Roll, Pitch, Yaw)
-            lidar_front_samples,            # 10 valori
-            lidar_rear_samples,              # 10 valori
-            target_coords_normalized        #3 valori
+            avg_velocity_norm,                     #1 valore (obs[0])
+            pos_norm,                          # 3 valori (obs[1:3])
+            orientation_obs_norm,                  # 3 valori (obs[4:6])
+            target_coords_norm,          # 3 valori (obs[17:19])
+            lidar_front_samples_norm,          # 10 valori (obs[7:16])
             ], dtype=np.float32)
         return obs_space
 
@@ -266,59 +263,66 @@ class CustomCarEnv:
             'collision_penalty': 0.0,
             'falling_penalty': 0.0,
             'blocked_penalty': 0.0,
-            'speed_reward': 0.0,
-            'off_road_penalty': 0.0,
-            'time_penalty': 0.0
+            'time_penalty': 0.0,
+            'proximity_penalty': 0.0
         }
 
-        # Extract relevant observations
-        tesla_x = obs[2] * self.road_length
-        tesla_y = obs[3] * (self.road_width / 2)
-        tesla_z = obs[4] * 1.0
+        avg_speed = obs[0] *self.max_speed
+        
+        tesla_pos_norm = obs[1:4]
+        tesla_pos = np.copy(tesla_pos_norm)
+        tesla_pos[0] *= self.road_length
+        tesla_pos[1] *= self.road_width
 
-        target_coords = self.target['translation'].getSFVec3f()
-        current_distance = np.linalg.norm(np.array([target_coords[0] - tesla_x,
-                                                     target_coords[1] - tesla_y,
-                                                     target_coords[2] - tesla_z]))
+        orientation_norm = obs[4:7]
+        orientation = np.copy(orientation_norm) * self.max_angle_roll_pitch_yaw
+
+        target_norm = obs[7:10]
+        target = np.copy(target_norm)
+        target[0] *= self.road_length
+        target[1] *= self.road_width
+
+        lidars_norm = obs[10:20]
+        lidars = np.copy(lidars_norm) * self.lidar_front.getMaxRange()
+
+
+        current_distance_from_target = np.linalg.norm(target - tesla_pos)
+
 
         # 1. Progress Reward
         if self.prev_distance is not None:
-            distance_reduction = self.prev_distance - current_distance
-            reward_components['progress_reward'] = distance_reduction * 2.0
-        self.prev_distance = current_distance
+            distance_reduction = self.prev_distance - current_distance_from_target
+            reward_components['progress_reward'] = distance_reduction * 0.5
+        self.prev_distance = current_distance_from_target
 
         # 2. Target Reached Reward
-        if current_distance < self.distance_target_threshold:
+        if current_distance_from_target < self.distance_target_threshold:
             reward_components['target_reached_reward'] = 100.0
 
         # 3. Collision Penalty
-        front_lidar_dist = obs[8:18]
-        rear_lidar_dist = obs[18:28]
-        normalized_th_front = self.collision_th / self.lidar_front.getMaxRange()
-        normalized_th_rear = self.collision_th / self.lidar_rear.getMaxRange()
-        
-        avg_speed = 0.5 * ((90 * obs[0] + 40) + (90 * obs[1] + 40)) 
-        
-        collision = (np.any(front_lidar_dist < normalized_th_front) and avg_speed > 0.1) or \
-                    (np.any(rear_lidar_dist < normalized_th_rear) and avg_speed < -0.1)
+        min_distance_lidar = np.min(lidars)
+        collision = (min_distance_lidar < self.collision_th and avg_speed> 0.1)
         
         if collision:
-            reward_components['collision_penalty'] = -50.0
+            reward_components['collision_penalty'] = -10.0
 
         # 4. Falling Penalty
-        roll, pitch = obs[5], obs[6]
+        #Roll rotazione intorno x
+        #Pitch rotazione intorno y
+        #Yaw rotazione intorno z
         max_angle_for_fall = 0.2
-        falling = abs(roll * np.pi) > max_angle_for_fall or abs(pitch * np.pi) > max_angle_for_fall
+        falling = abs(orientation[0]) > max_angle_for_fall or abs(orientation[1]) > max_angle_for_fall
         if falling:
-            reward_components['falling_penalty'] = -75.0
+            reward_components['falling_penalty'] = -9.0
 
         # 5. Blocked Penalty
         if self.block_counter > 0:
-            reward_components['blocked_penalty'] = -0.5
+            reward_components['blocked_penalty'] = -np.exp(0.03 * self.block_counter)
 
+        '''
         # 6. Speed Reward
-        ideal_speed_min = 20.0
-        ideal_speed_max = 60.0
+        ideal_speed_min = 10.0
+        ideal_speed_max = 26.0
 
         if avg_speed >= ideal_speed_min and avg_speed <= ideal_speed_max:
             reward_components['speed_reward'] = 0.1 * (avg_speed / ideal_speed_max)
@@ -328,16 +332,25 @@ class CustomCarEnv:
             reward_components['speed_reward'] = 0.05 * (avg_speed / ideal_speed_min)
         else:
             reward_components['speed_reward'] = -0.2
-
+        
         # 7. Off-Road Penalty
         road_half_width = self.road_width / 2
-        car_on_road = abs(tesla_y) < road_half_width
+        car_on_road = abs(tesla_pos[1]) < road_half_width
 
         if not car_on_road:
             reward_components['off_road_penalty'] = -1.0
-
+        '''
         # 8. Time Penalty
-        reward_components['time_penalty'] = -0.01
+        reward_components['time_penalty'] = -0.05
+
+        #9. Proximity penalty
+        proximity_warning_dist_front = 1.5 # metri, es. penalizza se a meno di 1.5 metri
+
+        if not collision: # Only apply proximity penalty if not already in collision
+            if min_distance_lidar < proximity_warning_dist_front:
+                proximity = proximity_warning_dist_front - min_distance_lidar
+                reward_components['proximity_penalty'] += -np.exp(proximity * 2)
+
 
         # Calcola la reward totale prima del clipping
         raw_reward = sum(reward_components.values())
@@ -345,85 +358,78 @@ class CustomCarEnv:
         # Applica il clipping alla reward finale
         reward = np.clip(raw_reward, -10.0, 10.0)
 
-        # ====== Stampa di Debug ======
-        # Stampa solo ogni N timesteps per non intasare la console
-        print_interval = 10 # Stampa ogni 10 timesteps, puoi cambiarlo
-        if self.curr_timestep % print_interval == 0:
-            print(f"\n--- Timestep {self.curr_timestep} ---")
-            for name, value in reward_components.items():
-                print(f"  {name.replace('_', ' ').capitalize()}: {value:.4f}")
-            print(f"  Raw Total Reward: {raw_reward:.4f}")
-            print(f"  Clipped Total Reward: {reward:.4f}")
-            print(f"  Current Distance to Target: {current_distance:.2f}m")
-            print(f"  Average Speed: {avg_speed:.2f} m/s")
-            print(f"  Collision (Lidar): {collision}")
-            print(f"  Falling: {falling}")
-            print(f"  Blocked Counter: {self.block_counter}")
-            print(f"--------------------------")
-        # ============================
-
         return reward
     
     def _check_done(self, obs):
 
+        avg_speed = obs[0] *self.max_speed
+
+        tesla_pos_norm = obs[1:4]
+        tesla_pos = np.copy(tesla_pos_norm)
+        tesla_pos[0] *= self.road_length
+        tesla_pos[1] *= self.road_width
+
+        orientation_norm = obs[4:7]
+        orientation = np.copy(orientation_norm) * self.max_angle_roll_pitch_yaw
+
+        target_norm = obs[7:10]
+        target = np.copy(target_norm)
+        target[0] *= self.road_length
+        target[1] *= self.road_width
+        #print(f'posizione target end: {target}') DEBUG
+
+        lidars_norm = obs[10:20]
+        lidars = np.copy(lidars_norm) * self.lidar_front.getMaxRange()
+
+
+        current_distance_from_target = np.linalg.norm(target - tesla_pos)
+        #print(f'distance from target: {tesla_pos} -> {target} = {current_distance_from_target}\n') #DEBUG
+
         cause = None
 
-        # Controllo urto: almeno uno dei valori del lidar deve essere sotto soglia
-        front_lidar_dist = obs[8:18] 
-        rear_lidar_dist = obs[18:28] 
-
-        normalized_th_front = self.collision_th / self.lidar_front.getMaxRange()
-        normalized_th_rear = self.collision_th / self.lidar_rear.getMaxRange()
-
-        collision = np.any(front_lidar_dist < normalized_th_front) or np.any(rear_lidar_dist < normalized_th_rear)
+        #===== Controllo urto =====
+        #DEBUG
+        #print(f"Collision lidar distances: {lidars}") #DEBUG
+        #print(f'Collision min lidar distance: {np.min(lidars)}') #DEBUG
+        collision = np.min(lidars) < self.collision_th
         if collision:
             cause = 'collision'
 
-        # Controllo timeout
+        #===== Controllo timeout =====
         timeout = self.curr_timestep >= self.max_timesteps
         if timeout and cause is None:
             cause = 'timeout'
 
         # controllo target
-        tesla_x = obs[2] * self.road_length 
-        tesla_y = obs[3] * (self.road_width / 2) 
-        tesla_z = obs[4] * 1.0 
 
-        target_coords = self.target['translation'].getSFVec3f()
+        #target_coords = self.target['translation'].getSFVec3f()
 
-        target_distance = np.sqrt(
-            (target_coords[0] - tesla_x)**2 +
-            (target_coords[1] - tesla_y)**2 +
-            (target_coords[2] - tesla_z)**2
-        )
-        if target_distance < self.distance_target_threshold and cause is None:
+        target_reached = current_distance_from_target < self.distance_target_threshold
+        if target_reached and cause is None:
             cause = 'target_reached'
 
         # controllo caduta(ribaltamento)
-        roll, pitch = obs[5], obs[6] 
         max_angle_for_fall = 0.2 
-        falling = abs(roll * np.pi) > max_angle_for_fall or abs(pitch * np.pi) > max_angle_for_fall
+        falling = abs(orientation[0]) > max_angle_for_fall or abs(orientation[1]) > max_angle_for_fall
         if falling and cause is None:
             cause = 'falling'
 
         # === Anti-block system ===
-        curr_pos = np.array([tesla_x, tesla_y, tesla_z])   
-        avg_speed = 0.5 * ((90 * obs[0] + 40) + (90 * obs[1] + 40))   
 
         if self.last_pos is not None:
-            delta_movement = np.linalg.norm(curr_pos - self.last_pos)
+            delta_movement = np.linalg.norm(tesla_pos - self.last_pos)
 
             if delta_movement < self.block_movement_threshold or abs(avg_speed) < self.min_speed_threshold:
                 self.block_counter += 1
             else:
                 self.block_counter = 0
-        self.last_pos = curr_pos
+        self.last_pos = tesla_pos
 
         is_blocked = self.block_counter > self.max_block_steps
         if is_blocked and cause is None:
             cause = 'blocked'
 
-        done = collision or timeout or (target_distance < self.distance_target_threshold) or falling or is_blocked
+        done = collision or timeout or target_reached or falling or is_blocked
 
         return done, cause
 
@@ -434,6 +440,9 @@ class CustomCarEnv:
         self.front_left_steer.setPosition(0.0)
         self.front_right_steer.setPosition(0.0)
 
+        self.translation_field.setSFVec3f(self.default_car_pos)
+        self.rotation_field.setSFRotation([0, 1, 0, 0])
+
         self.prev_distance = None
 
         self.curr_timestep = 0
@@ -441,10 +450,8 @@ class CustomCarEnv:
         self.block_counter = 0
         self.last_pos = None
 
-        # Esegui la UDR basata sul curriculum solo se non è già stata chiamata per l'episodio
-        if not self.udr_called:
-            self.udr_curriculum()
-            self.udr_called = True
+        # Directly call setup function, curriculum learning removed
+        #self._setup_environment_for_episode(num_obstacles=2) 
 
         self.car_node.setVelocity([0, 0, 0, 0, 0, 0]) #reset fisico totale della macchina
         self.car_node.resetPhysics()
@@ -452,157 +459,10 @@ class CustomCarEnv:
         for _ in range(20): # Piccola pausa per la stabilizzazione del simulatore
             self.robot.step(self.timestep)
 
-        # AGGIUNTA: Stampa il numero di successi consecutivi all'inizio di ogni episodio
-        print(f"Inizio Episodio {self.curr_episode} | Successi consecutivi: {self.consecutive_successes}/{self.num_successes_to_advance}")
-
-
+        print(f"Inizio Episodio {self.curr_episode}") 
+        
         return self._get_obs()
 
-    def assign_objects_and_target(self, min_distance=3.0, num_obj=6, target_x_range=None):
-        # Definizione dei rettilinei: start, end, coordinata costante, asse costante
-        # Metti i rettilinei in ordine crescente di X per facilitare la logica
-        straight_sections = [
-            {'start': 15, 'end': 120, 'const': 0, 'axis': 'y'},     # rettilineo 1
-            {'start': 180, 'end': 260, 'const': -20, 'axis': 'y'}   # rettilineo 2
-        ]
-
-        # Garantisci che ci siano abbastanza oggetti nel mondo per quelli da usare nella fase attuale
-        if self.num_total_obstacles < num_obj:
-            print(f"ATTENZIONE: Non ci sono abbastanza oggetti 'ostacolo_i' nel mondo Webots per la fase corrente del curriculum ({num_obj} richiesti, {self.num_total_obstacles} trovati). Usando tutti gli oggetti disponibili.")
-            num_obj = self.num_total_obstacles
-
-        # NUOVO: Resetta la posizione di tutti gli ostacoli (nascondili o mettili fuori scena)
-        # Quelli selezionati verranno riposizionati dopo.
-        # Per quelli NON selezionati, assicurati che non siano visibili.
-        # Posizione di "default" fuori scena (es. molto lontano lungo l'asse X o Y)
-        out_of_bounds_pos = [1000.0, 1000.0, 0.0] 
-        for obstacle_data in self.random_objects:
-            node = obstacle_data['node']
-            if node:
-                # Sposta l'ostacolo fuori dall'area di gioco visibile
-                node.getField('translation').setSFVec3f(out_of_bounds_pos)
-                # Resetta la rotazione per consistenza (opzionale ma buona pratica)
-                node.getField('rotation').setSFRotation([0, 0, 1, 0])
-
-
-        random.shuffle(self.random_objects)
-        selected_obstacles = self.random_objects[:num_obj] 
-
-        # 1. Posiziona il target in una sezione valida
-        # Trova le sezioni che contengono almeno una parte del target_x_range
-        valid_sections_for_target = []
-        if target_x_range:
-            for i, section in enumerate(straight_sections):
-                # Una sezione è valida se c'è sovrapposizione tra section_x_range e target_x_range
-                # Ovvero: section.end > target.start AND section.start < target.end
-                if section['end'] > target_x_range[0] and section['start'] < target_x_range[1]:
-                    valid_sections_for_target.append(section)
-        
-        if not valid_sections_for_target:
-            print(f"ERRORE CRITICO: Nessuna sezione diritta valida trovata per il target_x_range: {target_x_range}")
-            target_section = straight_sections[0] 
-        else:
-            target_section = random.choice(valid_sections_for_target)
-
-        
-        # Garantiamo che la X del target sia nell'intersezione del target_x_range e della sezione
-        target_x_min = max(target_x_range[0], target_section['start'])
-        target_x_max = min(target_x_range[1], target_section['end'])
-        
-        if target_x_min >= target_x_max:
-             print(f"AVVISO: Range X target non valido per sezione {target_section}: min={target_x_min}, max={target_x_max}. Ajusting to mid-point.")
-             target_x = (target_section['start'] + target_section['end']) / 2
-        else:
-             target_x = random.uniform(target_x_min, target_x_max)
-
-        # Calcola l'offset laterale per il target
-        target_const_offset = random.uniform((-self.road_width / 2) + 0.75, (self.road_width / 2) - 0.75)
-        
-        # Costruisci la posizione del target
-        z_value_target = 0.03 # Z per target
-        if target_section['axis'] == 'x':
-            target_pos = [target_section['const'] + target_const_offset, target_x, z_value_target]
-        else: # target_section['axis'] == 'y'
-            target_pos = [target_x, target_section['const'] + target_const_offset, z_value_target]
-        
-        self.target['translation'].setSFVec3f(target_pos)
-        self.target['rotation'].setSFRotation([0, 0, 1, 0])
-
-
-        # 2. Posiziona gli ostacoli selezionati nelle sezioni
-        all_elements_to_place_obstacles = list(selected_obstacles) 
-        random.shuffle(all_elements_to_place_obstacles) 
-
-        # Distribuisce gli ostacoli tra le sezioni della strada
-        objects_per_section_obstacle = len(all_elements_to_place_obstacles) // len(straight_sections)
-        remainder_obstacle = len(all_elements_to_place_obstacles) % len(straight_sections)
-
-        current_obstacle_index = 0
-        for i, section in enumerate(straight_sections):
-            num_objects_in_this_section = objects_per_section_obstacle + (1 if i < remainder_obstacle else 0)
-            section_objects_obstacles = all_elements_to_place_obstacles[current_obstacle_index : current_obstacle_index + num_objects_in_this_section]
-            current_obstacle_index += num_objects_in_this_section
-
-            # Inizializza con la posizione del target se l'ostacolo è nella stessa sezione del target
-            placed_coords = []
-            if section == target_section:
-                placed_coords.append(target_x) 
-
-            for obj in section_objects_obstacles:
-                node = obj['node']
-                translation_field = obj['translation']
-                rotation_field = obj['rotation']
-
-                attempts = 0
-                while True:
-                    # Per gli ostacoli, usa il range della sezione
-                    coord = random.uniform(section['start'], section['end'])
-                    
-                    # Offset laterale per la larghezza della strada
-                    const_offset = random.uniform((-self.road_width / 2) + 0.75, (self.road_width / 2) - 0.75)
-
-                    # Verifica la distanza da altri oggetti già piazzati in QUESTA sezione
-                    if all(abs(coord - other) >= min_distance for other in placed_coords):
-                        placed_coords.append(coord)
-                        break
-
-                    attempts += 1
-                    if attempts > 100:
-                        print(f"AVVISO: Impossibile posizionare {node.getDef() if node else 'un ostacolo'} nel rettilineo {i+1} rispettando min_distance dopo 100 tentativi. Posizionamento casuale.")
-                        break 
-
-                # Costruisci la nuova posizione per l'ostacolo
-                z_value_obstacle = 0.4 
-                if section['axis'] == 'x':
-                    pos = [section['const'] + const_offset, coord, z_value_obstacle]
-                else: 
-                    pos = [coord, section['const'] + const_offset, z_value_obstacle]
-                
-                translation_field.setSFVec3f(pos)
-                rotation_field.setSFRotation([0, 0, 1, 0]) 
-
-    def udr_curriculum(self):
-        current_settings = self.stage_settings[self.curriculum_stage]
-        target_x_range = current_settings['target_x_range']
-        num_obstacles_to_use = current_settings['num_obstacles_to_use']
-
-        #=====Posizione iniziale random della macchina=====
-        rand_x_start = self.default_car_pos[0] + np.random.uniform(-3, 5) 
-        rand_y_start = np.random.uniform(-0.5, 0.5) 
-        self.translation_field.setSFVec3f([rand_x_start, rand_y_start, 0.4])
-
-        #=====Rotazione iniziale random della macchina=====
-        angle = np.random.uniform(-0.7, 0.7)
-        self.rotation_field.setSFRotation([0, 0, 1, angle])   
-
-        #=====Posizioniamo oggetti e target nel mondo in base alla fase del curriculum=====
-        self.assign_objects_and_target(
-            min_distance=5.0, 
-            num_obj=num_obstacles_to_use,
-            target_x_range=target_x_range 
-        )
-        self.target_pos = self.target_translation.getSFVec3f() 
-        print(f'UDR applicata (Fase {self.curriculum_stage}): target in {self.target_pos}, {num_obstacles_to_use} ostacoli.')
 
 
 # --- Socket server per comunicazione RL esterna ---

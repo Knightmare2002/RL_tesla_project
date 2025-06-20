@@ -13,25 +13,21 @@ class WebotsRemoteEnv(gym.Env):
         self.conn = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.conn.connect((self.host, self.port))
 
-        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(31,), dtype=np.float32)
+        # Corrected observation space shape based on _get_obs concatenation in CustomCarEnv:
+        # combined_velocity (1) + pos (3) + orientation (3) + front_lidar_samples (10) + rear_lidar_samples (10) + target_coords_normalized (3) = 30
+        self.observation_space = spaces.Box(low=-np.inf, high=np.inf, shape=(20,), dtype=np.float32)
         '''
-        OBSERVATION SPACE
-        0   left_velocity
-        1   right_velocity
-        2   pos_x
-        3   pos_y
-        4   pos_z
-        5   roll
-        6   pitch
-        7   yaw
-        8-17 front_lidar
-        18-27  rear_lidar
-        28-30  target
+        OBSERVATION SPACE (Corrected Mapping from CustomCarEnv's _get_obs)
+        0   : combined_velocity_norm
+        1-3 : pos_x, pos_y, pos_z _norm
+        4-6 : roll, pitch, yaw _norm
+        7-9: target_x, target_y, target_z _norm
+        10-19: front_lidar_samples (10 values) _norm
         '''
 
         self.action_space = spaces.Box(
-            low=np.array([-50.0, -0.7]),   # aggiunta sterzata (circa -30°)
-            high=np.array([130.0, 0.7]),   # circa +60°
+            low=np.array([0.0, -1.0]), 
+            high=np.array([1.0, 1.0]),   #[eccelerazione, rotazione]
             dtype=np.float32
         )
 

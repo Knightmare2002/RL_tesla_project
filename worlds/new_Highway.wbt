@@ -7,12 +7,13 @@ EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/project
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/vehicles/protos/bmw/BmwX5Simple.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/obstacles/protos/OilBarrel.proto"
 EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/objects/road/protos/Road.proto"
+EXTERNPROTO "https://raw.githubusercontent.com/cyberbotics/webots/R2025a/projects/humans/pedestrian/protos/Pedestrian.proto"
 
 WorldInfo {
 }
 Viewpoint {
-  orientation -0.14904739544400913 -0.5480969673047139 0.8230276959754954 5.644970656044901
-  position -95.91937061608029 87.00799826475556 63.70772059202017
+  orientation -0.3178317327922525 -0.34903830706874456 0.8815640928649823 4.6800055502990725
+  position 40.0637773864333 128.1064796348723 106.12930310113313
 }
 Background {
   skyColor [
@@ -20,7 +21,7 @@ Background {
   ]
 }
 DEF target Solid {
-  translation 20.002 0.2498 0.03
+  translation 116.51 0 0.03
   rotation 0 0 -1 0
   children [
     Shape {
@@ -35,24 +36,27 @@ DEF target Solid {
   ]
 }
 DEF tesla3 TeslaModel3 {
-  translation 7.18706 -0.10925 0.212155
-  rotation 0.01259070380354838 -0.41612712570859267 -0.9092192746676877 0.0308822
+  hidden position_0_0 6.537759109963203e-06
+  hidden position2_0_0 0.009692453311076389
+  hidden position_0_1 1.849828120207896e-05
+  hidden position2_0_1 0.004660532534176592
+  hidden position_0_2 0.0007780597081336099
+  hidden position_0_3 0.0004266158609012718
+  hidden rotation_1 0.9999765145277449 -0.004849421241739688 0.004842882051302664 1.5708194540643272
+  hidden rotation_2 0.9999945697966107 0.0023210094522622096 -0.0023395068741225078 1.5708014733241256
+  hidden rotation_3 0.9999998486557421 -0.0003890299419489411 0.0003890298148147838 1.570796151344267
+  hidden rotation_4 0.9999999544997137 0.00021330799368718612 -0.00021330792398033217 1.5707960455002843
+  translation 1.9990371388350012 0.000885073165497073 0.12399852250091797
+  rotation -0.36167017450713623 -0.9321855239585597 -0.01499445877926044 0.011317249235746092
   controller "tesla_controller"
   supervisor TRUE
   sensorsSlotFront [
     DEF lidar_front Lidar {
-      rotation 0 1 0 0
+      rotation 0 1 0 -0.007
       name "lidar_front"
       fieldOfView 0.785
       verticalFieldOfView 0.05
       maxRange 15
-    }
-  ]
-  sensorsSlotRear [
-    DEF lidar_rear Lidar {
-      name "lidar_rear"
-      fieldOfView 1.57
-      maxRange 3
     }
   ]
   sensorsSlotTop [
@@ -70,17 +74,17 @@ DEF ostacolo_0 ToyotaPriusSimple {
   name "vehicle(1)"
 }
 DEF ostacolo_1 RangeRoverSportSVRSimple {
-  translation 85.1064 -13.4847 0.4
+  translation 90.1 -2.13 0.4
   rotation 0 0 -1 0
   name "vehicle(2)"
 }
 DEF ostacolo_2 LincolnMKZSimple {
-  translation 84.9036 16.5975 0.4
+  translation 40 -2.25 0.4
   rotation 0 0 -1 0
   name "vehicle(3)"
 }
 DEF ostacolo_3 BmwX5Simple {
-  translation 97.319 -14.0566 0.4
+  translation 64.37 3.76 0.4
   rotation 0 0 -1 0
   name "vehicle(4)"
 }
@@ -91,21 +95,16 @@ DEF ostacolo_4 OilBarrel {
 Road {
   width 12
   roadBorderHeight 0.25
+  rightBarrier TRUE
+  leftBarrier TRUE
   bottom TRUE
   wayPoints [
     0 0 0
     120 0 0
-    130 -5 0
-    140 -10 0
-    150 -15 0
-    160 -20 0
-    180 -20 0
-    200 -20 0
-    220 -20 0
-    220 -20 0
-    240 -20 0
-    260 -20 0
   ]
-  splineSubdivision 400
+  splineSubdivision 200
   roadBoundingObject TRUE
+}
+Pedestrian {
+  translation 79.67 0.32 1.27
 }
