@@ -16,7 +16,7 @@ wandb.init(
 )
 
 # Percorsi del modello
-MODEL_DIR = "C:\\Users\\samue\\OneDrive\\Desktop\\RL_tesla_project\\checkpoint_dir\\SacModel00\\sac_model00_300000_steps.zip"
+MODEL_DIR = "C:\\Users\samue\\OneDrive\\Desktop\\RL_tesla_project\\model_dir\\model_udr_00\model.zip"
 
 # Numero di episodi per la valutazione
 N_EVAL_EPISODES = 10
