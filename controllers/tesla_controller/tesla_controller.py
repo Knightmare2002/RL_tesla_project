@@ -2,7 +2,6 @@ from controller import Supervisor
 import numpy as np
 import socket
 import json
-import os
 
 
 class CustomCarEnv:
@@ -13,7 +12,7 @@ class CustomCarEnv:
 
         #====Gestione timesteps ====
         self.global_steps = 0
-        self.udr_start_steps = 250_000 # Soglia per iniziare la UDR (es. 200k steps)
+        self.udr_start_steps = 200_000 # Soglia per iniziare la UDR (es. 200k steps)
         # ============================
 
 

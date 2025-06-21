@@ -8,7 +8,7 @@ from webots_remote_env import WebotsRemoteEnv
 
 wandb.init(
     project="RL_tesla_project",
-    name="SAC-Webots-test-run00",
+    name="SAC-Webots-test-run02",
     sync_tensorboard=False, # Non sincronizzare tensorboard per il test
     monitor_gym=True,
     save_code=False, # Non salvare il codice per il test
@@ -16,10 +16,10 @@ wandb.init(
 )
 
 # Percorsi del modello
-MODEL_DIR = "C:\\Users\samue\\OneDrive\\Desktop\\RL_tesla_project\\model_dir\\model_udr_00\model.zip"
+MODEL_DIR = "C:\\Users\\samue\\OneDrive\\Desktop\\RL_tesla_project\\model_dir\\model_udr_02\\model.zip"
 
 # Numero di episodi per la valutazione
-N_EVAL_EPISODES = 10
+N_EVAL_EPISODES = 30
 
 # --- Carica l'ambiente ---
 env = WebotsRemoteEnv()
